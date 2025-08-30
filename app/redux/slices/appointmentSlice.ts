@@ -1,9 +1,8 @@
-// app/redux/slices/appointmentSlice.ts - CẬP NHẬT VỚI XỬ LÝ HỦY LỊCH CẢI THIỆN
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { AppointmentSearchParams, appointmentService } from '../../services/appointmentService';
 import { Appointment, CreateAppointmentRequest, UpdateAppointmentRequest } from '../../types';
 
-// ✅ THÊM: Interface cho state
+// ✅ Interface for state
 export interface AppointmentState {
     appointments: Appointment[];
     currentAppointment: Appointment | null;
@@ -16,9 +15,10 @@ export interface AppointmentState {
         hasNextPage: boolean;
         hasPrevPage: boolean;
     } | null;
-    // ✅ THÊM: Trạng thái loading riêng cho cancel
     isCancelling: boolean;
     cancelError: string | null;
+    // ✅ THÊM: pendingAppointment field to store pending appointment data
+    pendingAppointment: CreateAppointmentRequest | null;
 }
 
 const initialState: AppointmentState = {
@@ -29,9 +29,11 @@ const initialState: AppointmentState = {
     pagination: null,
     isCancelling: false,
     cancelError: null,
+    // ✅ THÊM: Initialize pendingAppointment as null
+    pendingAppointment: null,
 };
 
-// ✅ Async thunks
+// ✅ Async thunks (unchanged)
 export const createAppointment = createAsyncThunk(
     'appointments/create',
     async (data: CreateAppointmentRequest, { rejectWithValue }) => {
@@ -87,10 +89,9 @@ export const updateAppointment = createAsyncThunk(
     }
 );
 
-// ✅ CẬP NHẬT: Cancel appointment với xử lý lỗi tốt hơn
 export const cancelAppointment = createAsyncThunk(
     'appointments/cancel',
-    async (id: string, { rejectWithValue, getState }) => {
+    async (id: string, { rejectWithValue }) => {
         try {
             console.log('🔄 Redux: Starting cancel appointment:', id);
             const response = await appointmentService.cancelAppointment(id);
@@ -98,10 +99,7 @@ export const cancelAppointment = createAsyncThunk(
             return { id, appointment: response.data };
         } catch (error: any) {
             console.error('❌ Redux: Cancel appointment error:', error);
-
             let message = 'Không thể hủy lịch hẹn';
-
-            // Xử lý các loại lỗi khác nhau
             if (typeof error === 'string') {
                 message = error;
             } else if (error?.message) {
@@ -109,14 +107,12 @@ export const cancelAppointment = createAsyncThunk(
             } else if (error?.response?.data?.message) {
                 message = error.response.data.message;
             }
-
             console.error('❌ Redux: Cancel error message:', message);
             return rejectWithValue(message);
         }
     }
 );
 
-// ✅ THÊM: Get available slots
 export const getAvailableSlots = createAsyncThunk(
     'appointments/getAvailableSlots',
     async (date: string, { rejectWithValue }) => {
@@ -134,17 +130,22 @@ const appointmentSlice = createSlice({
     name: 'appointments',
     initialState,
     reducers: {
-        // ✅ THÊM: Clear errors
+        // ✅ Existing reducers
         clearError: (state) => {
             state.error = null;
             state.cancelError = null;
         },
-        // ✅ THÊM: Clear current appointment
         clearCurrentAppointment: (state) => {
             state.currentAppointment = null;
         },
-        // ✅ THÊM: Reset state
         resetState: () => initialState,
+        // ✅ THÊM: New reducers for pending appointment
+        savePendingAppointment: (state, action) => {
+            state.pendingAppointment = action.payload;
+        },
+        clearPendingAppointment: (state) => {
+            state.pendingAppointment = null;
+        },
     },
     extraReducers: (builder) => {
         // Create appointment
@@ -156,6 +157,8 @@ const appointmentSlice = createSlice({
             .addCase(createAppointment.fulfilled, (state, action) => {
                 state.isLoading = false;
                 state.appointments.unshift(action.payload);
+                // ✅ THÊM: Clear pending appointment after successful creation
+                state.pendingAppointment = null;
             })
             .addCase(createAppointment.rejected, (state, action) => {
                 state.isLoading = false;
@@ -201,12 +204,12 @@ const appointmentSlice = createSlice({
             })
             .addCase(updateAppointment.fulfilled, (state, action) => {
                 state.isLoading = false;
-                const index = state.appointments.findIndex(apt => apt._id === action.payload._id);
+                const index = state.appointments.findIndex(apt => apt._id === action.payload.id);
                 if (index !== -1) {
-                    state.appointments[index] = action.payload;
+                    state.appointments[index] = action.payload.appointment;
                 }
-                if (state.currentAppointment && state.currentAppointment._id === action.payload._id) {
-                    state.currentAppointment = action.payload;
+                if (state.currentAppointment && state.currentAppointment._id === action.payload.id) {
+                    state.currentAppointment = action.payload.appointment;
                 }
             })
             .addCase(updateAppointment.rejected, (state, action) => {
@@ -214,7 +217,7 @@ const appointmentSlice = createSlice({
                 state.error = action.payload as string;
             });
 
-        // ✅ CẬP NHẬT: Cancel appointment với state riêng biệt
+        // Cancel appointment
         builder
             .addCase(cancelAppointment.pending, (state) => {
                 state.isCancelling = true;
@@ -224,17 +227,12 @@ const appointmentSlice = createSlice({
             .addCase(cancelAppointment.fulfilled, (state, action) => {
                 state.isCancelling = false;
                 const { id, appointment } = action.payload;
-
                 console.log('✅ Redux: Cancel appointment fulfilled:', { id, status: appointment.status });
-
-                // Cập nhật trong danh sách appointments
                 const index = state.appointments.findIndex(apt => apt._id === id);
                 if (index !== -1) {
                     state.appointments[index] = appointment;
                     console.log('✅ Redux: Updated appointment in list');
                 }
-
-                // Cập nhật current appointment nếu là cùng một appointment
                 if (state.currentAppointment && state.currentAppointment._id === id) {
                     state.currentAppointment = appointment;
                     console.log('✅ Redux: Updated current appointment');
@@ -246,7 +244,7 @@ const appointmentSlice = createSlice({
                 console.error('❌ Redux: Cancel appointment rejected:', action.payload);
             });
 
-        // ✅ THÊM: Get available slots
+        // Get available slots
         builder
             .addCase(getAvailableSlots.pending, (state) => {
                 state.isLoading = true;
@@ -262,10 +260,11 @@ const appointmentSlice = createSlice({
     },
 });
 
-export const { clearError, clearCurrentAppointment, resetState } = appointmentSlice.actions;
+// ✅ Export actions including new ones
+export const { clearError, clearCurrentAppointment, resetState, savePendingAppointment, clearPendingAppointment } = appointmentSlice.actions;
 export default appointmentSlice.reducer;
 
-// ✅ THÊM: Selectors
+// ✅ Selectors (updated to include pendingAppointment)
 export const selectAppointments = (state: { appointments: AppointmentState }) => state.appointments.appointments;
 export const selectCurrentAppointment = (state: { appointments: AppointmentState }) => state.appointments.currentAppointment;
 export const selectAppointmentLoading = (state: { appointments: AppointmentState }) => state.appointments.isLoading;
@@ -273,8 +272,9 @@ export const selectAppointmentError = (state: { appointments: AppointmentState }
 export const selectAppointmentPagination = (state: { appointments: AppointmentState }) => state.appointments.pagination;
 export const selectIsCancelling = (state: { appointments: AppointmentState }) => state.appointments.isCancelling;
 export const selectCancelError = (state: { appointments: AppointmentState }) => state.appointments.cancelError;
+export const selectPendingAppointment = (state: { appointments: AppointmentState }) => state.appointments.pendingAppointment;
 
-// ✅ THÊM: Helper selectors
+// Helper selectors (unchanged)
 export const selectAppointmentsByStatus = (status: string) => (state: { appointments: AppointmentState }) =>
     state.appointments.appointments.filter(apt => status === 'all' || apt.status === status);
 

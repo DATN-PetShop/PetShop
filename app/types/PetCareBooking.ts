@@ -1,3 +1,6 @@
+// PetCareBooking.ts
+
+// Existing interfaces
 export interface Service {
     id: string;
     name: string;
@@ -17,4 +20,17 @@ export interface CustomerInfo {
     phone: string;
     email: string;
     notes: string;
+}
+
+// ✅ Added PurchasedPetOrderItem interface
+export interface PurchasedPetOrderItem {
+    order_id: { _id: string };
+    pet_id: {
+        _id: string;
+        name: string;
+        image?: string;
+    };
+    variant_id: {
+        _id: string;
+    } | null;
 }

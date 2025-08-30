@@ -1,4 +1,3 @@
-// app/screens/AppointmentDetailScreen.tsx - CẬP NHẬT HỖ TRỢ NO-SHOW VÀ NOTES
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import React, { useEffect, useState } from 'react';
@@ -51,7 +50,7 @@ const AppointmentDetailScreen: React.FC = () => {
         setRefreshing(false);
     };
 
-    // ✅ CẬP NHẬT: Thêm màu cho no-show
+    // Hàm lấy màu cho trạng thái
     const getStatusColor = (status: string = '') => {
         switch (status) {
             case 'pending':
@@ -71,7 +70,7 @@ const AppointmentDetailScreen: React.FC = () => {
         }
     };
 
-    // ✅ CẬP NHẬT: Thêm text cho no-show
+    // Hàm lấy text cho trạng thái
     const getStatusText = (status: string = '') => {
         switch (status) {
             case 'pending':
@@ -91,7 +90,7 @@ const AppointmentDetailScreen: React.FC = () => {
         }
     };
 
-    // ✅ THÊM: Icon cho status
+    // Hàm lấy icon cho trạng thái
     const getStatusIcon = (status: string = '') => {
         switch (status) {
             case 'pending':
@@ -110,6 +109,19 @@ const AppointmentDetailScreen: React.FC = () => {
                 return 'ellipse-outline';
         }
     };
+
+    // ✅ THÊM: Hàm lấy text cho phương thức thanh toán
+    const getPaymentMethodText = (method: string = '') => {
+        switch (method) {
+            case 'vnpay':
+                return 'Thanh toán VNPay';
+            case 'cod':
+                return 'Thanh toán khi nhận dịch vụ';
+            default:
+                return 'Không xác định';
+        }
+    };
+
 
     const formatPrice = (price: number = 0) => {
         return new Intl.NumberFormat('vi-VN', {
@@ -139,6 +151,18 @@ const AppointmentDetailScreen: React.FC = () => {
             hour: '2-digit',
             minute: '2-digit'
         });
+    };
+
+    // ✅ THÊM: Hàm format ngày giờ VNPay (nếu có)
+    const formatVNPayDate = (vnpayDate: string = '') => {
+        if (!vnpayDate) return 'N/A';
+        // Giả sử vnpayDate có định dạng YYYYMMDDHHMMSS (ví dụ: 20250829130700)
+        const year = vnpayDate.slice(0, 4);
+        const month = vnpayDate.slice(4, 6);
+        const day = vnpayDate.slice(6, 8);
+        const hour = vnpayDate.slice(8, 10);
+        const minute = vnpayDate.slice(10, 12);
+        return `${day}/${month}/${year} ${hour}:${minute}`;
     };
 
     const getPetImage = () => {
@@ -260,7 +284,7 @@ const AppointmentDetailScreen: React.FC = () => {
                         Đặt lịch lúc: {formatDateTime(currentAppointment.created_at)}
                     </Text>
 
-                    {/* ✅ THÔNG BÁO CHO NO-SHOW */}
+                    {/* Thông báo cho no-show */}
                     {currentAppointment.status === 'no-show' && (
                         <View style={styles.noShowBanner}>
                             <Ionicons name="warning" size={20} color="#DC2626" />
@@ -361,7 +385,6 @@ const AppointmentDetailScreen: React.FC = () => {
                                 <Text style={styles.scheduleValue}>{currentAppointment.appointment_time || 'N/A'}</Text>
                             </View>
                         </View>
-                        {/* ✅ THÊM: Hiển thị giờ kết thúc dự kiến */}
                         {currentAppointment.service_id?.duration && (
                             <View style={styles.scheduleItem}>
                                 <Ionicons name="hourglass-outline" size={20} color="#8B5CF6" />
@@ -391,7 +414,7 @@ const AppointmentDetailScreen: React.FC = () => {
                     </View>
                 )}
 
-                {/* ✅ CẢI TIẾN: Notes Card với styling tốt hơn */}
+                {/* Notes Card */}
                 {currentAppointment.notes && (
                     <View style={[styles.infoCard, styles.notesCard]}>
                         <View style={styles.cardHeader}>
@@ -400,7 +423,6 @@ const AppointmentDetailScreen: React.FC = () => {
                         </View>
                         <View style={styles.notesContainer}>
                             <Text style={styles.notesText}>{currentAppointment.notes}</Text>
-                            {/* Hiển thị thời gian cập nhật ghi chú nếu có */}
                             {currentAppointment.updated_at && currentAppointment.updated_at !== currentAppointment.created_at && (
                                 <Text style={styles.notesUpdatedTime}>
                                     Cập nhật lúc: {formatDateTime(currentAppointment.updated_at)}
@@ -410,7 +432,7 @@ const AppointmentDetailScreen: React.FC = () => {
                     </View>
                 )}
 
-                {/* Payment Information Card */}
+                {/* Payment Information Card - CẬP NHẬT */}
                 <View style={styles.infoCard}>
                     <View style={styles.cardHeader}>
                         <Ionicons name="card" size={24} color="#3B82F6" />
@@ -420,16 +442,37 @@ const AppointmentDetailScreen: React.FC = () => {
                         <View style={styles.paymentRow}>
                             <Text style={styles.paymentLabel}>Mã đơn hàng:</Text>
                             <Text style={styles.paymentValue}>
-                                #{currentAppointment.order_id && currentAppointment.order_id._id
-                                    ? currentAppointment.order_id._id.slice(-6)
-                                    : 'N/A'}
+                                {currentAppointment.order_id._id}
                             </Text>
                         </View>
                         <View style={styles.paymentRow}>
                             <Text style={styles.paymentLabel}>Tổng tiền:</Text>
                             <Text style={styles.paymentValueTotal}>{formatPrice(currentAppointment.total_amount)}</Text>
                         </View>
-                        {/* ✅ THÊM: Trạng thái thanh toán cho no-show */}
+                        <View style={styles.paymentRow}>
+                            <Text style={styles.paymentLabel}>Phương thức thanh toán:</Text>
+                            <Text style={styles.paymentValue}>
+                                {getPaymentMethodText(currentAppointment.payment_method)}
+                            </Text>
+                        </View>
+                        {/* Hiển thị thông tin VNPay nếu có */}
+                        {currentAppointment.payment_method === 'vnpay' && currentAppointment.vnpay_transaction_id && (
+                            <>
+                                <View style={styles.paymentRow}>
+                                    <Text style={styles.paymentLabel}>Mã giao dịch VNPay:</Text>
+                                    <Text style={styles.paymentValue}>{currentAppointment.vnpay_transaction_id}</Text>
+                                </View>
+                                {currentAppointment.vnpay_payment_date && (
+                                    <View style={styles.paymentRow}>
+                                        <Text style={styles.paymentLabel}>Thời gian thanh toán:</Text>
+                                        <Text style={styles.paymentValue}>
+                                            {formatVNPayDate(currentAppointment.vnpay_payment_date)}
+                                        </Text>
+                                    </View>
+                                )}
+                            </>
+                        )}
+                        {/* Thông báo trạng thái no-show */}
                         {currentAppointment.status === 'no-show' && (
                             <View style={styles.paymentStatusRow}>
                                 <Ionicons name="alert-circle-outline" size={16} color="#DC2626" />
@@ -443,7 +486,6 @@ const AppointmentDetailScreen: React.FC = () => {
 
                 {/* Action Buttons */}
                 <View style={styles.actionContainer}>
-                    {/* ✅ NÚT ĐẶT LẠI CHO NO-SHOW */}
                     {currentAppointment.status === 'no-show' && (
                         <TouchableOpacity
                             style={styles.rebookButton}
@@ -460,7 +502,6 @@ const AppointmentDetailScreen: React.FC = () => {
                         </TouchableOpacity>
                     )}
 
-                    {/* Nút liên hệ hỗ trợ */}
                     <TouchableOpacity
                         style={styles.contactButton}
                         onPress={() => {
@@ -493,7 +534,6 @@ const AppointmentDetailScreen: React.FC = () => {
                         <Text style={styles.contactButtonText}>Liên hệ hỗ trợ</Text>
                     </TouchableOpacity>
 
-                    {/* Nút trở về danh sách lịch hẹn */}
                     <TouchableOpacity
                         style={styles.backToListButton}
                         onPress={() => navigation.navigate('AppointmentHistory')}
@@ -502,7 +542,6 @@ const AppointmentDetailScreen: React.FC = () => {
                         <Text style={styles.backToListButtonText}>Xem danh sách lịch hẹn</Text>
                     </TouchableOpacity>
 
-                    {/* Thông tin về chính sách */}
                     <View style={styles.cancelPolicyInfo}>
                         <Ionicons name="information-circle-outline" size={16} color="#6B7280" />
                         <Text style={styles.cancelPolicyText}>
@@ -524,6 +563,7 @@ const AppointmentDetailScreen: React.FC = () => {
     );
 };
 
+// Styles giữ nguyên, không thay đổi
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -597,8 +637,6 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#FFFFFF',
     },
-
-    // Status card styles
     statusCard: {
         backgroundColor: '#FFFFFF',
         margin: 16,
@@ -638,8 +676,6 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#6B7280',
     },
-
-    // ✅ STYLES CHO NO-SHOW BANNER
     noShowBanner: {
         flexDirection: 'row',
         alignItems: 'flex-start',
@@ -655,7 +691,6 @@ const styles = StyleSheet.create({
         flex: 1,
         lineHeight: 20,
     },
-
     cancelInfoBanner: {
         flexDirection: 'row',
         alignItems: 'flex-start',
@@ -671,8 +706,6 @@ const styles = StyleSheet.create({
         flex: 1,
         lineHeight: 20,
     },
-
-    // Info card styles
     infoCard: {
         backgroundColor: '#FFFFFF',
         marginHorizontal: 16,
@@ -696,8 +729,6 @@ const styles = StyleSheet.create({
         color: '#374151',
         marginLeft: 8,
     },
-
-    // Pet info styles
     petInfoContainer: {
         flexDirection: 'row',
     },
@@ -735,8 +766,6 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#6B7280',
     },
-
-    // Service info styles
     serviceInfo: {
         flex: 1,
     },
@@ -764,8 +793,6 @@ const styles = StyleSheet.create({
         color: '#6B7280',
         marginLeft: 8,
     },
-
-    // Schedule info styles
     scheduleInfo: {
         gap: 16,
     },
@@ -786,8 +813,6 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#374151',
     },
-
-    // Staff info styles
     staffInfo: {
         gap: 4,
     },
@@ -804,8 +829,6 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#6B7280',
     },
-
-    // ✅ IMPROVED NOTES STYLES
     notesCard: {
         backgroundColor: '#fff',
         borderWidth: 1,
@@ -830,8 +853,6 @@ const styles = StyleSheet.create({
         fontStyle: 'italic',
         marginTop: 4,
     },
-
-    // Payment info styles
     paymentInfo: {
         gap: 12,
     },
@@ -854,7 +875,6 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: '#3B82F6',
     },
-    // ✅ THÊM: Payment status row cho no-show
     paymentStatusRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -869,15 +889,11 @@ const styles = StyleSheet.create({
         marginLeft: 8,
         fontStyle: 'italic',
     },
-
-    // Action container
     actionContainer: {
         marginHorizontal: 16,
         marginTop: 8,
         gap: 12,
     },
-
-    // ✅ THÊM: Rebook button styles
     rebookButton: {
         backgroundColor: '#10B981',
         flexDirection: 'row',
@@ -897,7 +913,6 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#FFFFFF',
     },
-
     contactButton: {
         backgroundColor: '#3B82F6',
         flexDirection: 'row',
@@ -912,7 +927,6 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#FFFFFF',
     },
-
     backToListButton: {
         backgroundColor: '#6B7280',
         flexDirection: 'row',
@@ -927,7 +941,6 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#FFFFFF',
     },
-
     cancelPolicyInfo: {
         flexDirection: 'row',
         alignItems: 'flex-start',
