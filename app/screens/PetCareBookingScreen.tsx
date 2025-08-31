@@ -19,7 +19,7 @@ import {
 import { Calendar } from 'react-native-calendars';
 import { useDispatch, useSelector } from 'react-redux';
 import { useAuth } from '../../hooks/redux';
-import { clearPendingAppointment, createAppointment, getAvailableSlots, savePendingAppointment, selectPendingAppointment } from '../redux/slices/appointmentSlice';
+import { clearPendingAppointment, createAppointment, getAvailableSlots, savePendingAppointment, selectPendingAppointment,selectNoShowStatus,getNoShowStatus } from '../redux/slices/appointmentSlice';
 import { getAllServices } from '../redux/slices/careServiceSlice';
 import { AppDispatch, RootState } from '../redux/store';
 import { ordersService } from '../services/OrderApiService';
@@ -267,6 +267,7 @@ const PetCareBookingScreen: React.FC = () => {
     // Redux state
     const { services: backendServices, isLoading: servicesLoading } = useSelector((state: RootState) => state.careServices);
     const { availableSlots, isLoading: appointmentLoading } = useSelector((state: RootState) => state.appointments);
+    const noShowStatus = useSelector(selectNoShowStatus); // ✅ Thêm selector cho no-show status
 
     // Component state
     const [selectedPet, setSelectedPet] = useState<Pet | null>(null);
@@ -395,6 +396,20 @@ const PetCareBookingScreen: React.FC = () => {
         };
     }, [navigation]);
 
+    // ✅ Thêm effect: Fetch no-show status khi load backend data
+    useEffect(() => {
+        if (token) {
+            dispatch(getNoShowStatus());
+        }
+    }, [token, dispatch]);
+
+    // ✅ Thêm effect: Force VNPay nếu restricted
+    useEffect(() => {
+        if (noShowStatus.restricted) {
+            setPaymentMethod('vnpay');
+        }
+    }, [noShowStatus]);
+
     // ================================
     // FUNCTIONS
     // ================================
@@ -502,7 +517,6 @@ const PetCareBookingScreen: React.FC = () => {
 
         console.log('Saving pending appointment:', appointmentData);
         dispatch(savePendingAppointment(appointmentData));
-
         let lastError = null;
         for (const serverUrl of SERVER_URLS) {
             try {
@@ -647,6 +661,16 @@ const PetCareBookingScreen: React.FC = () => {
             return;
         }
 
+        // ✅ Thêm check restricted trước khi proceed
+        if (noShowStatus.restricted && paymentMethod === 'cod') {
+            Alert.alert(
+                'Cảnh báo',
+                `Bạn đã không đến lịch hẹn ${noShowStatus.noShowCount} lần trong 3 tháng qua. Vui lòng sử dụng thanh toán VNPay để đặt lịch.`
+            );
+            setPaymentMethod('vnpay');
+            return;
+        }
+
         if (paymentMethod === 'vnpay') {
             await handleVNPayPayment();
             return;
@@ -687,6 +711,18 @@ const PetCareBookingScreen: React.FC = () => {
             console.error('❌ Appointment creation error:', error);
             Alert.alert('Lỗi', error.message || 'Không thể đặt lịch hẹn. Vui lòng thử lại.');
         }
+    };
+
+    // ✅ Cập nhật hàm setPaymentMethod để check restricted
+    const handleSetPaymentMethod = (method: 'cod' | 'vnpay') => {
+        if (noShowStatus.restricted && method === 'cod') {
+            Alert.alert(
+                'Cảnh báo',
+                `Bạn đã không đến lịch hẹn ${noShowStatus.noShowCount} lần trong 3 tháng qua. Vui lòng sử dụng thanh toán VNPay.`
+            );
+            return;
+        }
+        setPaymentMethod(method);
     };
 
     const resetForm = () => {
@@ -951,9 +987,20 @@ const PetCareBookingScreen: React.FC = () => {
                                 <Ionicons name="card" size={24} color="#F59E0B" />
                                 <Text style={styles.sectionTitle}>Phương thức thanh toán</Text>
                             </View>
+                            {/* ✅ Thêm thông báo nếu restricted */}
+                            {noShowStatus.restricted && (
+                                <Text style={styles.restrictedNote}>
+                                    Bạn đã không đến {noShowStatus.noShowCount} lần trong 3 tháng. Chỉ có thể thanh toán qua VNPay.
+                                </Text>
+                            )}
                             <TouchableOpacity
-                                style={[styles.paymentOption, paymentMethod === 'cod' && styles.paymentSelected]}
-                                onPress={() => setPaymentMethod('cod')}
+                                style={[
+                                    styles.paymentOption, 
+                                    paymentMethod === 'cod' && styles.paymentSelected,
+                                    noShowStatus.restricted && styles.disabledPayment // ✅ Disable style nếu restricted
+                                ]}
+                                onPress={() => handleSetPaymentMethod('cod')} // ✅ Sử dụng hàm mới
+                                disabled={noShowStatus.restricted} // ✅ Disable nếu restricted
                             >
                                 <FontAwesome5 name="money-check" size={20} color="#10B981" style={styles.paymentIcon} />
                                 <View style={styles.paymentInfo}>
@@ -966,7 +1013,7 @@ const PetCareBookingScreen: React.FC = () => {
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={[styles.paymentOption, paymentMethod === 'vnpay' && styles.paymentSelected]}
-                                onPress={() => setPaymentMethod('vnpay')}
+                                onPress={() => handleSetPaymentMethod('vnpay')} // ✅ Sử dụng hàm mới
                             >
                                 <FontAwesome5 name="credit-card" size={20} color="#1976D2" style={styles.paymentIcon} />
                                 <View style={styles.paymentInfo}>
@@ -1374,6 +1421,18 @@ const styles = StyleSheet.create({
         backgroundColor: '#3B82F6',
     },
 
+    // ✅ Thêm style cho disable payment và note restricted
+    disabledPayment: {
+        opacity: 0.5,
+        backgroundColor: '#F3F4F6',
+    },
+    restrictedNote: {
+        fontSize: 14,
+        color: '#EF4444',
+        marginBottom: 12,
+        textAlign: 'center',
+    },
+
     // Form Inputs
     inputLabel: {
         fontSize: 14,
@@ -1471,6 +1530,8 @@ const styles = StyleSheet.create({
         textAlign: 'right',
         flex: 1,
         marginLeft: 8,
+        marginLeft: 8,
+        paddingLeft: 8,
     },
     summaryDivider: {
         height: 1,

@@ -2,10 +2,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 
-export const API_BASE_URL = "http://192.168.2.5:5000/api"
+// export const API_BASE_URL = "http://192.168.2.5:5000/api"
+export const API_BASE_URL = "http://192.168.1.30:5000/api"
 
 // app/utils/api.ts
-// Ngân hàng: NCB
+// Ngân hàng: NCB 
 // Số thẻ: 9704198526191432198
 // Tên chủ thẻ: NGUYEN VAN A
 // Ngày phát hành: 07/15
