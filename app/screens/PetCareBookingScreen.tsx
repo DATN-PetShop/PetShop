@@ -88,63 +88,52 @@ interface VNPayResponse {
 // ================================
 
 const extractPetFromOrderItem = (orderItem: ApiOrderItem): PurchasedPetOrderItem | null => {
-    console.log('🔍 Extracting pet from order item:', JSON.stringify(orderItem, null, 2));
+    const log = (message: string, data?: any) => console.log(`🔍 ${message}`, data || '');
 
-    let petData = null;
-    let petId = null;
+    const assignPetData = (data: any, source: string): { petData: any; petId: string | null } => {
+        if (!data || !data._id) {
+            log(`No valid pet data found in ${source}`);
+            return { petData: null, petId: null };
+        }
+        log(`Pet found in ${source}:`, data._id);
+        return { petData: data, petId: data._id };
+    };
+
+    let petData: any = null;
+    let petId: string | null = null;
 
     if (orderItem.item_type) {
-        console.log('✅ New format detected with item_type:', orderItem.item_type);
-
+        log(`New format detected with item_type: ${orderItem.item_type}`);
         switch (orderItem.item_type) {
             case 'pet':
-                if (orderItem.item_info) {
-                    petData = orderItem.item_info;
-                    petId = orderItem.item_info._id;
-                    console.log('🐕 Direct pet item found:', petId);
-                }
+                ({ petData, petId } = assignPetData(orderItem.item_info, 'item_info'));
                 break;
-
             case 'variant':
-                console.log('🧬 Processing variant item...');
                 if (orderItem.variant_id?.pet_id) {
-                    petData = orderItem.variant_id.pet_id;
-                    petId = orderItem.variant_id.pet_id._id;
-                    console.log('🧬 Variant pet found in variant_id.pet_id:', petId);
+                    ({ petData, petId } = assignPetData(orderItem.variant_id.pet_id, 'variant_id.pet_id'));
                 } else if (orderItem.item_info?.variant?.pet_id) {
-                    petData = orderItem.item_info.pet_id;
-                    petId = orderItem.item_info.pet_id._id;
-                    console.log('🧬 Variant pet found in item_info.pet_id:', petId);
+                    ({ petData, petId } = assignPetData(orderItem.item_info.pet_id, 'item_info.pet_id'));
                 } else if (orderItem.item_info?._id) {
-                    petData = orderItem.item_info;
-                    petId = orderItem.item_info._id;
-                    console.log('🧬 Variant pet found in item_info:', petId);
+                    ({ petData, petId } = assignPetData(orderItem.item_info, 'item_info'));
                 }
                 break;
-
             case 'product':
-                console.log('📦 Product item - skipping (not a pet)');
+                log('Product item - skipping (not a pet)');
                 return null;
-
             default:
-                console.log('❌ Unknown item type:', orderItem.item_type);
+                log(`Unknown item type: ${orderItem.item_type}`);
+                return null;
         }
     } else if (orderItem.pet_id) {
-        console.log('🔄 Legacy format detected - using pet_id');
-        petData = orderItem.pet_id;
-        petId = orderItem.pet_id._id;
+        ({ petData, petId } = assignPetData(orderItem.pet_id, 'pet_id (legacy)'));
     } else if (orderItem.variant_id?.pet_id) {
-        console.log('🔄 Legacy variant format detected - using variant_id.pet_id');
-        petData = orderItem.variant_id.pet_id;
-        petId = orderItem.variant_id.pet_id._id;
+        ({ petData, petId } = assignPetData(orderItem.variant_id.pet_id, 'variant_id.pet_id (legacy)'));
     }
 
     if (!petData || !petId) {
-        console.log('❌ Failed to extract pet data');
+        log('Failed to extract pet data');
         return null;
     }
-
-    console.log('✅ Pet data extracted:', { id: petId, name: petData.name, type: petData.type });
 
     return {
         _id: orderItem._id,
@@ -155,41 +144,24 @@ const extractPetFromOrderItem = (orderItem: ApiOrderItem): PurchasedPetOrderItem
         item_info: orderItem.item_info,
         item_type: orderItem.item_type,
         variant_id: orderItem.variant_id,
-        images: orderItem.images
+        images: orderItem.images,
     };
 };
 
-const getBreedName = (pet: any, orderItem: PurchasedPetOrderItem): string => {
-    if (pet.breed_id) {
-        if (typeof pet.breed_id === 'object' && pet.breed_id.name) {
-            return pet.breed_id.name;
-        }
-        if (typeof pet.breed_id === 'string' && pet.breed_id.trim()) {
-            return pet.breed_id;
-        }
-    }
-
-    const variantPetBreed = orderItem.variant_id?.pet_id?.breed_id;
-    if (variantPetBreed) {
-        if (typeof variantPetBreed === 'object' && variantPetBreed.name) {
-            return variantPetBreed.name;
-        }
-        if (typeof variantPetBreed === 'string' && variantPetBreed.trim()) {
-            return variantPetBreed;
-        }
-    }
-
-    const itemBreed = orderItem.item_info?.breed_id;
-    if (itemBreed) {
-        if (typeof itemBreed === 'object' && itemBreed.name) {
-            return itemBreed.name;
-        }
-        if (typeof itemBreed === 'string' && itemBreed.trim()) {
-            return itemBreed;
-        }
-    }
-
+const getBreedNameFromSource = (breed: any): string => {
+    if (!breed) return '';
+    if (typeof breed === 'object' && breed.name) return breed.name;
+    if (typeof breed === 'string' && breed.trim()) return breed;
     return '';
+};
+
+const getBreedName = (pet: any, orderItem: PurchasedPetOrderItem): string => {
+    return (
+        getBreedNameFromSource(pet.breed_id) ||
+        getBreedNameFromSource(orderItem.variant_id?.pet_id?.breed_id) ||
+        getBreedNameFromSource(orderItem.item_info?.breed_id) ||
+        ''
+    );
 };
 
 const getVariantInfo = (orderItem: PurchasedPetOrderItem): string => {
@@ -255,6 +227,67 @@ const getServiceIcon = (category: string): string => {
         spa: '🐕'
     };
     return icons[category] || '🐕';
+};
+
+const createAppointmentData = (
+    selectedPet: Pet | null,
+    selectedService: Service | null,
+    selectedDate: string,
+    selectedTime: string,
+    customerInfo: CustomerInfo,
+    purchasedPets: PurchasedPetOrderItem[],
+    backendServices: any[],
+    paymentMethod: 'cod' | 'vnpay'
+): any | null => {
+    const selectedPetOrderItem = purchasedPets.find(item => item.pet_id?._id === selectedPet?.id);
+    const backendService = backendServices.find(s => s._id === selectedService?.id);
+
+    if (!selectedPetOrderItem?.pet_id || !backendService || !selectedPetOrderItem.order_id?._id) {
+        Alert.alert('Lỗi', 'Không tìm thấy thông tin thú cưng, dịch vụ hoặc đơn hàng');
+        return null;
+    }
+
+    const dateParts = selectedDate.split('/');
+    const apiDate = `${dateParts[2]}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}`;
+
+    return {
+        pet_id: selectedPetOrderItem.pet_id._id,
+        service_id: backendService._id,
+        appointment_date: apiDate,
+        appointment_time: selectedTime,
+        notes: customerInfo.notes.trim() || undefined,
+        order_id: selectedPetOrderItem.order_id._id,
+        total_amount: backendService.price,
+        item_type: selectedPetOrderItem.variant_id ? 'variant' : 'pet',
+        payment_method: paymentMethod,
+        ...(selectedPetOrderItem.variant_id?._id && { variant_id: selectedPetOrderItem.variant_id._id }),
+    };
+};
+
+const getPendingAppointmentData = async (pendingAppointment: any): Promise<any | null> => {
+    let appointmentData = pendingAppointment;
+    if (!appointmentData) {
+        try {
+            const storedData = await AsyncStorage.getItem(PENDING_APPOINTMENT_KEY);
+            if (storedData) {
+                appointmentData = JSON.parse(storedData);
+                console.log('✅ Sử dụng dữ liệu từ AsyncStorage:', appointmentData);
+            }
+        } catch (error) {
+            console.error('⚠️ Lỗi khi đọc từ AsyncStorage:', error);
+        }
+    }
+    return appointmentData;
+};
+
+const clearPendingData = async (dispatch: AppDispatch) => {
+    dispatch(clearPendingAppointment());
+    await AsyncStorage.removeItem(PENDING_APPOINTMENT_KEY);
+    console.log('🧹 Đã xóa dữ liệu tạm');
+};
+
+const showErrorAlert = (title: string, message: string, actions: any[] = [{ text: 'Đóng' }]) => {
+    Alert.alert(title, message, actions);
 };
 
 // ================================
@@ -325,7 +358,7 @@ const PetCareBookingScreen: React.FC = () => {
     const pets: Pet[] = purchasedPets
         .map(convertToPetFormat)
         .filter((pet): pet is Pet => pet !== null);
-// Lấy dịch vụ từ backend và map sang định dạng frontend
+    // Lấy dịch vụ từ backend và map sang định dạng frontend
     const services: Service[] = backendServices.map(service => ({
         id: service._id,
         name: service.name,
@@ -334,7 +367,7 @@ const PetCareBookingScreen: React.FC = () => {
         description: service.description || '',
         icon: getServiceIcon(service.category)
     }));
-// Định nghĩa khung giờ cố định
+    // Định nghĩa khung giờ cố định
     const timeSlots: TimeSlot[] = [
         { time: '08:00', available: Array.isArray(availableSlots) ? availableSlots.includes('08:00') : true },
         { time: '09:00', available: Array.isArray(availableSlots) ? availableSlots.includes('09:00') : true },
@@ -359,7 +392,7 @@ const PetCareBookingScreen: React.FC = () => {
         }
         loadBackendData();
     }, [token]);
-// Load dữ liệu backend (dịch vụ, thú cưng đã mua)
+    // Load dữ liệu backend (dịch vụ, thú cưng đã mua)
     useEffect(() => {
         if (selectedDate) {
             const dateParts = selectedDate.split('/');
@@ -371,7 +404,7 @@ const PetCareBookingScreen: React.FC = () => {
             }
         }
     }, [selectedDate]);
-// Load available slots khi ngày thay đổi
+    // Load available slots khi ngày thay đổi
     useEffect(() => {
         const handleDeepLink = async (event: { url: string }) => {
             const url = event.url;
@@ -412,43 +445,41 @@ const PetCareBookingScreen: React.FC = () => {
     }, [noShowStatus]);
     // Lưu trạng thái lịch hẹn tạm thời vào Redux và AsyncStorage
     useEffect(() => {
-        // Chỉ cập nhật nếu có đủ thông tin cơ bản
-        if (selectedPet && selectedService && selectedDate && selectedTime && customerInfo.name && customerInfo.phone) {
-            const selectedPetOrderItem = purchasedPets.find(item => item.pet_id?._id === selectedPet.id);
-            const backendService = backendServices.find(s => s._id === selectedService.id);
+        const saveAppointmentData = async () => {
+            if (
+                selectedPet &&
+                selectedService &&
+                selectedDate &&
+                selectedTime &&
+                customerInfo.name &&
+                customerInfo.phone
+            ) {
+                const appointmentData = createAppointmentData(
+                    selectedPet,
+                    selectedService,
+                    selectedDate,
+                    selectedTime,
+                    customerInfo,
+                    purchasedPets,
+                    backendServices,
+                    paymentMethod
+                );
 
-            if (selectedPetOrderItem?.pet_id && backendService && selectedPetOrderItem.order_id?._id) {
-                const dateParts = selectedDate.split('/');
-                const apiDate = `${dateParts[2]}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}`;
-
-                const updatedAppointmentData = {
-                    pet_id: selectedPetOrderItem.pet_id._id,
-                    service_id: backendService._id,
-                    appointment_date: apiDate,
-                    appointment_time: selectedTime,
-                    notes: customerInfo.notes.trim() || undefined,
-                    order_id: selectedPetOrderItem.order_id._id,
-                    total_amount: backendService.price,
-                    item_type: selectedPetOrderItem.variant_id ? 'variant' : 'pet',
-                    payment_method: paymentMethod,
-                    ...(selectedPetOrderItem.variant_id?._id && { variant_id: selectedPetOrderItem.variant_id._id }),
-                };
-
-                // Cập nhật Redux store
-                dispatch(savePendingAppointment(updatedAppointmentData));
-
-                // Cập nhật AsyncStorage (async, không block UI)
-                AsyncStorage.setItem(PENDING_APPOINTMENT_KEY, JSON.stringify(updatedAppointmentData))
-                    .then(() => {
-                        console.log('🔄 Đã cập nhật pendingAppointment với dữ liệu mới:', updatedAppointmentData);
-                    })
-                    .catch(error => {
+                if (appointmentData) {
+                    dispatch(savePendingAppointment(appointmentData));
+                    try {
+                        await AsyncStorage.setItem(PENDING_APPOINTMENT_KEY, JSON.stringify(appointmentData));
+                        console.log('🔄 Đã lưu pendingAppointment:', appointmentData);
+                    } catch (error) {
                         console.error('⚠️ Lỗi lưu AsyncStorage:', error);
-                    });
+                    }
+                }
             }
-        }
+        };
+
+        saveAppointmentData();
     }, [selectedPet, selectedService, selectedDate, selectedTime, customerInfo, paymentMethod, purchasedPets, backendServices]);
-// Kiểm tra khung giờ có còn trống trước khi đặt lịch
+    // Kiểm tra khung giờ có còn trống trước khi đặt lịch
     const checkSlotAvailability = async (date: string, time: string): Promise<boolean> => {
         try {
             // Refresh available slots for the selected date
@@ -475,7 +506,7 @@ const PetCareBookingScreen: React.FC = () => {
     };
 
 
-// Load dữ liệu backend (dịch vụ, thú cưng đã mua)
+    // Load dữ liệu backend (dịch vụ, thú cưng đã mua)
     const loadBackendData = async () => {
         try {
             await dispatch(getAllServices({ active: true }));
@@ -485,7 +516,7 @@ const PetCareBookingScreen: React.FC = () => {
             Alert.alert('Lỗi', 'Không thể tải dữ liệu. Vui lòng thử lại.');
         }
     };
-// Load thú cưng đã mua từ API
+    // Load thú cưng đã mua từ API
     const loadPurchasedPets = async () => {
         try {
             setPetsLoading(true);
@@ -531,53 +562,39 @@ const PetCareBookingScreen: React.FC = () => {
             setPetsLoading(false);
         }
     };
-// Xử lý phản hồi từ VNPay
+    // Xử lý phản hồi từ VNPay
     const handleDateSelect = (day: { dateString: string }) => {
         const date = new Date(day.dateString);
         const formattedDate = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
         setSelectedDate(formattedDate);
         setShowCalendar(false);
     };
-// Định dạng tiền tệ
+    // Định dạng tiền tệ
     const formatPrice = (price: number) => {
         return new Intl.NumberFormat('vi-VN', {
             style: 'currency',
             currency: 'VND'
         }).format(price);
     };
-// Xử lý thanh toán VNPay
+    // Xử lý thanh toán VNPay
     const handleVNPayPayment = async () => {
         if (!selectedPet || !selectedService || !selectedDate || !selectedTime || !customerInfo.name || !customerInfo.phone) {
             Alert.alert('Thiếu thông tin', 'Vui lòng điền đầy đủ thông tin để đặt lịch');
             return;
         }
 
-        const selectedPetOrderItem = purchasedPets.find(item => item.pet_id?._id === selectedPet.id);
-        const backendService = backendServices.find(s => s._id === selectedService.id);
+        const appointmentData = createAppointmentData(
+            selectedPet,
+            selectedService,
+            selectedDate,
+            selectedTime,
+            customerInfo,
+            purchasedPets,
+            backendServices,
+            'vnpay'
+        );
 
-        if (!selectedPetOrderItem?.pet_id || !backendService || !selectedPetOrderItem.order_id?._id) {
-            Alert.alert('Lỗi', 'Không tìm thấy thông tin thú cưng, dịch vụ hoặc đơn hàng');
-            return;
-        }
-
-        const dateParts = selectedDate.split('/');
-        const apiDate = `${dateParts[2]}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}`;
-
-        // 🔥 QUAN TRỌNG: Tạo dữ liệu mới từ state hiện tại, KHÔNG dùng dữ liệu cũ
-        const appointmentData = {
-            pet_id: selectedPetOrderItem.pet_id._id,
-            service_id: backendService._id,
-            appointment_date: apiDate,  // ✅ Sử dụng ngày HIỆN TẠI user chọn
-            appointment_time: selectedTime,  // ✅ Sử dụng giờ HIỆN TẠI user chọn
-            notes: customerInfo.notes.trim() || undefined,
-            order_id: selectedPetOrderItem.order_id._id,
-            total_amount: backendService.price,
-            item_type: selectedPetOrderItem.variant_id ? 'variant' : 'pet',
-            payment_method: 'vnpay',
-            ...(selectedPetOrderItem.variant_id?._id && { variant_id: selectedPetOrderItem.variant_id._id }),
-        };
-
-        console.log('💾 Lưu dữ liệu lịch hẹn MỚI NHẤT:', appointmentData);
+        if (!appointmentData) return;
 
         try {
             // Xóa dữ liệu cũ trước khi lưu mới
@@ -605,17 +622,17 @@ const PetCareBookingScreen: React.FC = () => {
                             'Authorization': `Bearer ${token}`,
                         },
                         body: JSON.stringify({
-                            amount: backendService.price,
+                            amount: appointmentData.total_amount,
                             user_id: user._id,
-                            pet_id: selectedPetOrderItem.pet_id._id,
-                            service_id: backendService._id,
-                            appointment_date: apiDate,  // ✅ Gửi ngày mới nhất
-                            appointment_time: selectedTime,  // ✅ Gửi giờ mới nhất
-                            notes: customerInfo.notes.trim() || '',
-                            order_id: selectedPetOrderItem.order_id._id,
-                            orderInfo: `Thanh toan lich hen cho don hang ${selectedPetOrderItem.order_id._id}`,
+                            pet_id: appointmentData.pet_id,
+                            service_id: appointmentData.service_id,
+                            appointment_date: appointmentData.appointment_date,
+                            appointment_time: appointmentData.appointment_time,
+                            notes: appointmentData.notes || '',
+                            order_id: appointmentData.order_id,
+                            orderInfo: `Thanh toan lich hen cho don hang ${appointmentData.order_id}`,
                             orderType: 'appointment',
-                            ...(selectedPetOrderItem.variant_id?._id && { variant_id: selectedPetOrderItem.variant_id._id }),
+                            ...(appointmentData.variant_id && { variant_id: appointmentData.variant_id }),
                         }),
                         signal: controller.signal,
                     });
@@ -683,19 +700,7 @@ const PetCareBookingScreen: React.FC = () => {
             }
 
             if (vnpayData.vnp_ResponseCode === '00' && vnpayData.vnp_TransactionStatus === '00') {
-                // Lấy pendingAppointment từ Redux hoặc AsyncStorage
-                let currentPendingAppointment = pendingAppointment;
-                if (!currentPendingAppointment) {
-                    try {
-                        const storedData = await AsyncStorage.getItem(PENDING_APPOINTMENT_KEY);
-                        if (storedData) {
-                            currentPendingAppointment = JSON.parse(storedData);
-                        }
-                    } catch (storageError) {
-                        console.error('Lỗi đọc AsyncStorage:', storageError);
-                    }
-                }
-
+                const currentPendingAppointment = await getPendingAppointmentData(pendingAppointment);
                 await createAppointmentWithVNPay(vnpayData, dispatch, currentPendingAppointment);
                 Alert.alert('Thành công', 'Thanh toán VNPay và đặt lịch thành công!');
             } else {
@@ -751,26 +756,8 @@ const PetCareBookingScreen: React.FC = () => {
         pendingAppointment: any
     ) => {
         try {
-            let appointmentData = null;
+            let appointmentData = await getPendingAppointmentData(pendingAppointment);
 
-            // 🔥 QUAN TRỌNG: Luôn ưu tiên dữ liệu từ AsyncStorage (mới nhất)
-            try {
-                const storedData = await AsyncStorage.getItem(PENDING_APPOINTMENT_KEY);
-                if (storedData) {
-                    appointmentData = JSON.parse(storedData);
-                    console.log('✅ Sử dụng dữ liệu MỚI NHẤT từ AsyncStorage:', appointmentData);
-                }
-            } catch (storageError) {
-                console.error('⚠️ Lỗi khi đọc từ AsyncStorage:', storageError);
-            }
-
-            // Fallback: Nếu không có AsyncStorage, dùng Redux pendingAppointment
-            if (!appointmentData) {
-                appointmentData = pendingAppointment;
-                console.log('📦 Sử dụng dữ liệu từ Redux pendingAppointment:', appointmentData);
-            }
-
-            // Fallback cuối: Tái tạo từ component state hiện tại
             if (!appointmentData) {
                 console.log('🔄 Tái tạo dữ liệu từ component state hiện tại...');
 
@@ -827,8 +814,7 @@ const PetCareBookingScreen: React.FC = () => {
             console.log('✅ Lịch hẹn được tạo thành công:', result);
 
             // Xóa dữ liệu tạm sau khi thành công
-            dispatch(clearPendingAppointment());
-            await AsyncStorage.removeItem(PENDING_APPOINTMENT_KEY);
+            await clearPendingData(dispatch);
 
             setShowConfirmation(true);
 
@@ -836,9 +822,9 @@ const PetCareBookingScreen: React.FC = () => {
             console.error('💥 Lỗi tạo lịch hẹn VNPay:', error);
 
             // Xóa dữ liệu tạm khi lỗi
-            await AsyncStorage.removeItem(PENDING_APPOINTMENT_KEY);
+            await clearPendingData(dispatch);
 
-            let errorMessage = error.message || 'Không thể đặt lịch hẹn. Vui lòng thử lại.';
+            let errorMessage = error.message || 'Không thể tạo lịch hẹn. Vui lòng thử lại.';
             let alertActions = [{ text: 'Đóng' }];
 
             // Xử lý lỗi cụ thể
@@ -884,14 +870,93 @@ const PetCareBookingScreen: React.FC = () => {
     useEffect(() => {
         restorePendingAppointment();
     }, []);
-// Xử lý đặt lịch
+
+    const validateAppointmentDateTime = (dateString: string, timeString: string): { isValid: boolean; message?: string } => {
+        try {
+            // Parse date từ format DD/MM/YYYY
+            const dateParts = dateString.split('/');
+            if (dateParts.length !== 3) {
+                return { isValid: false, message: 'Định dạng ngày không hợp lệ' };
+            }
+
+            const day = parseInt(dateParts[0]);
+            const month = parseInt(dateParts[1]) - 1; // Month is 0-indexed in JS Date
+            const year = parseInt(dateParts[2]);
+
+            // Parse time từ format HH:MM
+            const timeParts = timeString.split(':');
+            if (timeParts.length !== 2) {
+                return { isValid: false, message: 'Định dạng thời gian không hợp lệ' };
+            }
+
+            const hour = parseInt(timeParts[0]);
+            const minute = parseInt(timeParts[1]);
+
+            // Tạo Date object cho appointment
+            const appointmentDateTime = new Date(year, month, day, hour, minute);
+            const now = new Date();
+
+            console.log('🕐 Validating appointment time:', {
+                appointmentDateTime: appointmentDateTime.toISOString(),
+                now: now.toISOString(),
+                isPast: appointmentDateTime <= now
+            });
+
+            // Kiểm tra thời gian đặt lịch phải trong tương lai
+            if (appointmentDateTime <= now) {
+                return {
+                    isValid: false,
+                    message: 'Thời gian đặt lịch phải trong tương lai'
+                };
+            }
+
+            // Thêm validation: không được đặt lịch quá xa (ví dụ: không quá 3 tháng)
+            const threeMonthsFromNow = new Date();
+            threeMonthsFromNow.setMonth(threeMonthsFromNow.getMonth() + 3);
+
+            if (appointmentDateTime > threeMonthsFromNow) {
+                return {
+                    isValid: false,
+                    message: 'Không thể đặt lịch quá 3 tháng trong tương lai'
+                };
+            }
+
+            // Thêm validation: không được đặt lịch vào chủ nhật
+            const dayOfWeek = appointmentDateTime.getDay();
+            if (dayOfWeek === 0) { // Sunday = 0
+                return {
+                    isValid: false,
+                    message: 'Không thể đặt lịch vào Chủ nhật. Vui lòng chọn ngày khác.'
+                };
+            }
+
+            return { isValid: true };
+        } catch (error) {
+            console.error('Error validating appointment time:', error);
+            return {
+                isValid: false,
+                message: 'Lỗi khi kiểm tra thời gian đặt lịch'
+            };
+        }
+    };
+
+    // Xử lý đặt lịch
     const handleBooking = async () => {
+
         if (!selectedPet || !selectedService || !selectedDate || !selectedTime || !customerInfo.name || !customerInfo.phone) {
             Alert.alert('Thiếu thông tin', 'Vui lòng điền đầy đủ thông tin để đặt lịch');
             return;
         }
-
+        const timeValidation = validateAppointmentDateTime(selectedDate, selectedTime);
+        if (!timeValidation.isValid) {
+            Alert.alert('Lỗi thời gian', timeValidation.message || 'Thời gian đặt lịch không hợp lệ');
+            return;
+        }
         // Check restricted status
+        if (!noShowStatus) {
+            Alert.alert('Đang tải', 'Vui lòng chờ kiểm tra trạng thái no-show trước khi đặt lịch.');
+            return;
+        }
         if (noShowStatus.restricted && paymentMethod === 'cod') {
             Alert.alert(
                 'Cảnh báo',
@@ -916,28 +981,20 @@ const PetCareBookingScreen: React.FC = () => {
         }
 
         // COD flow remains the same...
+        const appointmentData = createAppointmentData(
+            selectedPet,
+            selectedService,
+            selectedDate,
+            selectedTime,
+            customerInfo,
+            purchasedPets,
+            backendServices,
+            'cod'
+        );
+
+        if (!appointmentData) return;
+
         try {
-            const selectedPetOrderItem = purchasedPets.find(item => item.pet_id?._id === selectedPet?.id);
-            const backendService = backendServices.find(s => s._id === selectedService.id);
-
-            if (!selectedPetOrderItem?.pet_id || !backendService || !selectedPetOrderItem.order_id?._id) {
-                Alert.alert('Lỗi', 'Không tìm thấy thông tin cần thiết để đặt lịch');
-                return;
-            }
-
-            const appointmentData = {
-                pet_id: selectedPetOrderItem.pet_id._id,
-                service_id: backendService._id,
-                appointment_date: apiDate,
-                appointment_time: selectedTime,
-                notes: customerInfo.notes.trim() || undefined,
-                order_id: selectedPetOrderItem.order_id._id,
-                total_amount: backendService.price,
-                item_type: selectedPetOrderItem.variant_id ? 'variant' : 'pet',
-                payment_method: 'cod',
-                ...(selectedPetOrderItem.variant_id?._id && { variant_id: selectedPetOrderItem.variant_id._id })
-            };
-
             console.log('💰 Tạo lịch hẹn COD:', appointmentData);
 
             const result = await dispatch(createAppointment(appointmentData)).unwrap();
@@ -945,7 +1002,17 @@ const PetCareBookingScreen: React.FC = () => {
 
             setShowConfirmation(true);
         } catch (error: any) {
-            console.error('❌ Lỗi tạo lịch hẹn COD:', error);
+            Alert.alert(
+                'Cảnh báo',
+                'Bạn đã không đến lịch hẹn 3 lần trong 3 tháng qua. Vui lòng sử dụng thanh toán VNPay để đặt lịch.',
+                [
+                    {
+                        text: 'Chọn VNPay',
+                        onPress: () => setPaymentMethod('vnpay'),
+                    },
+                    { text: 'Đóng' },
+                ]
+            );
             Alert.alert('Lỗi', error.message || 'Không thể đặt lịch hẹn. Vui lòng thử lại.');
         }
     };
@@ -994,7 +1061,7 @@ const PetCareBookingScreen: React.FC = () => {
             )}
         </TouchableOpacity>
     );
-// Render service item
+    // Render service item
     const renderServiceItem = ({ item }: { item: Service }) => (
         <TouchableOpacity
             style={[styles.serviceItem, selectedService?.id === item.id && styles.selectedItem]}
@@ -1016,7 +1083,7 @@ const PetCareBookingScreen: React.FC = () => {
             <Text style={styles.servicePrice}>{formatPrice(item.price)}</Text>
         </TouchableOpacity>
     );
-// Render time slot item
+    // Render time slot item
     const renderTimeSlot = ({ item }: { item: TimeSlot }) => (
         <TouchableOpacity
             style={[
@@ -1040,7 +1107,7 @@ const PetCareBookingScreen: React.FC = () => {
     // ================================
     // CONFIRMATION SCREEN
     // ================================
-// Hiển thị
+    // Hiển thị
     if (showConfirmation) {
         return (
             <SafeAreaView style={styles.container}>
@@ -1229,7 +1296,7 @@ const PetCareBookingScreen: React.FC = () => {
                             )}
                             <TouchableOpacity
                                 style={[
-                                    styles.paymentOption, 
+                                    styles.paymentOption,
                                     paymentMethod === 'cod' && styles.paymentSelected,
                                     noShowStatus.restricted && styles.disabledPayment // ✅ Disable style nếu restricted
                                 ]}
@@ -1764,8 +1831,6 @@ const styles = StyleSheet.create({
         textAlign: 'right',
         flex: 1,
         marginLeft: 8,
-        marginLeft: 8,
-        paddingLeft: 8,
     },
     summaryDivider: {
         height: 1,
@@ -1893,7 +1958,7 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
     },
 
- 
+
     confirmationButtons: {
         width: '100%',
         flexDirection: 'row',
