@@ -84,13 +84,6 @@ const AppointmentHistoryScreen: React.FC = () => {
 
     // Logic kiểm tra có thể sửa lịch hẹn
     const canEditAppointment = (appointment: Appointment) => {
-        console.log('Checking canEdit:', {
-            id: appointment._id,
-            status: appointment.status,
-            date: appointment.appointment_date,
-            time: appointment.appointment_time,
-        });
-
         // Chỉ cho phép sửa khi status là 'pending'
         if (appointment.status !== 'pending') {
             let message = '';
@@ -221,13 +214,6 @@ const AppointmentHistoryScreen: React.FC = () => {
 
     // Logic kiểm tra có thể hủy lịch
     const canCancelAppointment = (appointment: Appointment) => {
-        console.log('Checking canCancel:', {
-            id: appointment._id,
-            status: appointment.status,
-            date: appointment.appointment_date,
-            time: appointment.appointment_time,
-        });
-
         // Chỉ cho phép hủy khi status là 'pending'
         if (appointment.status !== 'pending') {
             let message = '';
@@ -250,7 +236,6 @@ const AppointmentHistoryScreen: React.FC = () => {
                 default:
                     message = 'Không thể hủy lịch hẹn ở trạng thái hiện tại.';
             }
-            console.log('Cannot cancel:', message);
             return { allowed: false, message };
         }
 
@@ -261,10 +246,7 @@ const AppointmentHistoryScreen: React.FC = () => {
             const appointmentDateTimeLocal = addHours(appointmentDateTime, 7);
             const now = new Date();
 
-            console.log('appointmentDateTimeLocal:', appointmentDateTimeLocal.toString());
-
             if (!isAfter(appointmentDateTimeLocal, now)) {
-                console.log('Cannot cancel: Past appointment');
                 return {
                     allowed: false,
                     message: 'Không thể hủy lịch hẹn đã qua thời gian đặt lịch.'
@@ -274,7 +256,6 @@ const AppointmentHistoryScreen: React.FC = () => {
             const twoHoursFromNow = addHours(now, 2);
             const isLateCancel = !isAfter(appointmentDateTimeLocal, twoHoursFromNow);
 
-            console.log('Can cancel:', { isLateCancel });
             return {
                 allowed: true,
                 message: '',
@@ -442,13 +423,7 @@ const AppointmentHistoryScreen: React.FC = () => {
 
             isUpcoming = isAfter(appointmentDateTimeLocal, new Date());
 
-            console.log('Appointment check:', {
-                id: item._id,
-                status: item.status,
-                appointmentDateTime: appointmentDateTimeLocal.toString(),
-                isUpcoming,
-                currentTime: new Date().toString(),
-            });
+            
         } catch (error) {
             console.error('Error parsing date:', error, {
                 date: item.appointment_date,

@@ -19,6 +19,7 @@ import Icon from 'react-native-vector-icons/Feather';
 // Import components and services
 import { NotificationBadge } from '../../components/NotificationBadge';
 import { useAuth } from '../../hooks/redux';
+import BannerSlider from '../components/BannerSlider'; // Điều chỉnh path theo cấu trúc project
 import ChatSupportButton from '../components/ChatSupportButton';
 import HomeSearchBar from '../components/HomeSearchBar';
 import PetList from '../components/Pet/PetList';
@@ -48,6 +49,36 @@ const HomeScreen = () => {
   const navigation = useNavigation() as any;
   const route = useRoute();
   const { token } = useAuth();
+  const [banners, setBanners] = useState([
+    {
+      id: '1',
+      image: 'https://lh3.googleusercontent.com/proxy/YGBdiGmx0h-riNmW-TPMA_o5BY-9hLAuEmu3CwdtbG7BN8yo2AevyQgu5TM49Bwuo0GM1eNd1XNVOqoIvF1IVHhFHTDzuy-xPBdGZXfQlK2AY2Xrspkrlz0-8nvwkMagvkGE0JFNUx0gK9O0',
+      // title: 'Chào mừng đến Pet Shop',
+      // subtitle: 'Tìm thú cưng yêu thích của bạn',
+      onPress: () => safeNavigate(navigation, 'PetAll'),
+    },
+    {
+      id: '2',
+      image: 'https://vetad.net/wp-content/uploads/2018/10/Banner3-1.jpg',
+      // title: 'Khuyến mãi đặc biệt',
+      // subtitle: 'Giảm giá 20% cho tất cả thú cưng',
+      onPress: () => safeNavigate(navigation, 'Promotions'),
+    },
+    {
+      id: '3',
+      image: 'https://cdn.shopify.com/s/files/1/0268/6861/files/cat-supplies-checklist_600x600.jpg?v=1571152745',
+      // title: 'Phụ kiện thú cưng',
+      // subtitle: 'Đầy đủ phụ kiện chăm sóc',
+      onPress: () => safeNavigate(navigation, 'ProductAll'),
+    },
+    {
+      id: '4',
+      image: 'https://www.petlandcanada.com/assets/images/blog/caring-for-a-puppy.jpg',
+      // title: 'Dịch vụ chăm sóc',
+      // subtitle: 'Spa, tắm rửa, cắt tỉa lông',
+      onPress: () => safeNavigate(navigation, 'Services'),
+    },
+  ]);
 
   // Main data state
   const [pets, setPets] = useState<Pet[]>([]);
@@ -440,10 +471,14 @@ const HomeScreen = () => {
         </View>
 
         {/* Banner */}
-        <View style={styles.bannerContainer}>
-          <Image
-            source={{ uri: 'https://lh3.googleusercontent.com/proxy/YGBdiGmx0h-riNmW-TPMA_o5BY-9hLAuEmu3CwdtbG7BN8yo2AevyQgu5TM49Bwuo0GM1eNd1XNVOqoIvF1IVHhFHTDzuy-xPBdGZXfQlK2AY2Xrspkrlz0-8nvwkMagvkGE0JFNUx0gK9O0' }}
-            style={styles.bannerImage}
+        <View style={styles.bannerSection}>
+          <BannerSlider
+            banners={banners}
+            autoSlide={true}
+            autoSlideInterval={4000}
+            showDots={true}
+            height={150}
+            borderRadius={16}
           />
         </View>
 
@@ -838,6 +873,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '500',
+  },
+  bannerSection: {
+    marginTop: 20,
   },
 });
 

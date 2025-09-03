@@ -1,12 +1,13 @@
-// PetCareBookingScreen.tsx - UPDATED VERSION
-import { Ionicons } from '@expo/vector-icons';
+import { FontAwesome5, Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     FlatList,
     Image,
+    Linking,
     Modal,
     SafeAreaView,
     ScrollView,
@@ -19,12 +20,14 @@ import {
 import { Calendar } from 'react-native-calendars';
 import { useDispatch, useSelector } from 'react-redux';
 import { useAuth } from '../../hooks/redux';
-import { createAppointment, getAvailableSlots } from '../redux/slices/appointmentSlice';
+import { clearPendingAppointment, createAppointment, getAvailableSlots, getNoShowStatus, savePendingAppointment, selectNoShowStatus, selectPendingAppointment } from '../redux/slices/appointmentSlice';
 import { getAllServices } from '../redux/slices/careServiceSlice';
 import { AppDispatch, RootState } from '../redux/store';
 import { ordersService } from '../services/OrderApiService';
 import { Pet } from '../types';
 import { CustomerInfo, Service, TimeSlot } from '../types/PetCareBooking';
+import { API_BASE_URL } from '../utils/api-client';
+const PENDING_APPOINTMENT_KEY = 'pendingAppointment';
 
 // ================================
 // TYPES & INTERFACES
@@ -72,71 +75,65 @@ interface ApiOrderItem extends PurchasedPetOrderItem {
     };
 }
 
+interface VNPayResponse {
+    vnp_ResponseCode?: string;
+    vnp_TransactionStatus?: string;
+    vnp_TxnRef?: string;
+    vnp_PayDate?: string;
+    vnp_Amount?: string;
+}
+
 // ================================
 // HELPER FUNCTIONS
 // ================================
 
 const extractPetFromOrderItem = (orderItem: ApiOrderItem): PurchasedPetOrderItem | null => {
-    console.log('🔍 Extracting pet from order item:', JSON.stringify(orderItem, null, 2));
+    const log = (message: string, data?: any) => console.log(`🔍 ${message}`, data || '');
 
-    let petData = null;
-    let petId = null;
+    const assignPetData = (data: any, source: string): { petData: any; petId: string | null } => {
+        if (!data || !data._id) {
+            log(`No valid pet data found in ${source}`);
+            return { petData: null, petId: null };
+        }
+        log(`Pet found in ${source}:`, data._id);
+        return { petData: data, petId: data._id };
+    };
 
-    // Handle new structure with item_type
+    let petData: any = null;
+    let petId: string | null = null;
+
     if (orderItem.item_type) {
-        console.log('✅ New format detected with item_type:', orderItem.item_type);
-
+        log(`New format detected with item_type: ${orderItem.item_type}`);
         switch (orderItem.item_type) {
             case 'pet':
-                if (orderItem.item_info) {
-                    petData = orderItem.item_info;
-                    petId = orderItem.item_info._id;
-                    console.log('🐕 Direct pet item found:', petId);
-                }
+                ({ petData, petId } = assignPetData(orderItem.item_info, 'item_info'));
                 break;
-
             case 'variant':
-                console.log('🧬 Processing variant item...');
                 if (orderItem.variant_id?.pet_id) {
-                    petData = orderItem.variant_id.pet_id;
-                    petId = orderItem.variant_id.pet_id._id;
-                    console.log('🧬 Variant pet found in variant_id.pet_id:', petId);
+                    ({ petData, petId } = assignPetData(orderItem.variant_id.pet_id, 'variant_id.pet_id'));
                 } else if (orderItem.item_info?.variant?.pet_id) {
-                    petData = orderItem.item_info.pet_id;
-                    petId = orderItem.item_info.pet_id._id;
-                    console.log('🧬 Variant pet found in item_info.pet_id:', petId);
+                    ({ petData, petId } = assignPetData(orderItem.item_info.pet_id, 'item_info.pet_id'));
                 } else if (orderItem.item_info?._id) {
-                    petData = orderItem.item_info;
-                    petId = orderItem.item_info._id;
-                    console.log('🧬 Variant pet found in item_info:', petId);
+                    ({ petData, petId } = assignPetData(orderItem.item_info, 'item_info'));
                 }
                 break;
-
             case 'product':
-                console.log('📦 Product item - skipping (not a pet)');
+                log('Product item - skipping (not a pet)');
                 return null;
-
             default:
-                console.log('❌ Unknown item type:', orderItem.item_type);
+                log(`Unknown item type: ${orderItem.item_type}`);
+                return null;
         }
-    }
-    // Fallback to legacy structure
-    else if (orderItem.pet_id) {
-        console.log('🔄 Legacy format detected - using pet_id');
-        petData = orderItem.pet_id;
-        petId = orderItem.pet_id._id;
+    } else if (orderItem.pet_id) {
+        ({ petData, petId } = assignPetData(orderItem.pet_id, 'pet_id (legacy)'));
     } else if (orderItem.variant_id?.pet_id) {
-        console.log('🔄 Legacy variant format detected - using variant_id.pet_id');
-        petData = orderItem.variant_id.pet_id;
-        petId = orderItem.variant_id.pet_id._id;
+        ({ petData, petId } = assignPetData(orderItem.variant_id.pet_id, 'variant_id.pet_id (legacy)'));
     }
 
     if (!petData || !petId) {
-        console.log('❌ Failed to extract pet data');
+        log('Failed to extract pet data');
         return null;
     }
-
-    console.log('✅ Pet data extracted:', { id: petId, name: petData.name, type: petData.type });
 
     return {
         _id: orderItem._id,
@@ -147,45 +144,24 @@ const extractPetFromOrderItem = (orderItem: ApiOrderItem): PurchasedPetOrderItem
         item_info: orderItem.item_info,
         item_type: orderItem.item_type,
         variant_id: orderItem.variant_id,
-        images: orderItem.images
+        images: orderItem.images,
     };
 };
 
+const getBreedNameFromSource = (breed: any): string => {
+    if (!breed) return '';
+    if (typeof breed === 'object' && breed.name) return breed.name;
+    if (typeof breed === 'string' && breed.trim()) return breed;
+    return '';
+};
+
 const getBreedName = (pet: any, orderItem: PurchasedPetOrderItem): string => {
-    // Try pet breed first
-    if (pet.breed_id) {
-        if (typeof pet.breed_id === 'object' && pet.breed_id.name) {
-            return pet.breed_id.name;
-        }
-
-        if (typeof pet.breed_id === 'string' && pet.breed_id.trim()) {
-            return pet.breed_id;
-        }
-    }
-
-    // Try variant pet breed
-    const variantPetBreed = orderItem.variant_id?.pet_id?.breed_id;
-    if (variantPetBreed) {
-        if (typeof variantPetBreed === 'object' && variantPetBreed.name) {
-            return variantPetBreed.name;
-        }
-        if (typeof variantPetBreed === 'string' && variantPetBreed.trim()) {
-            return variantPetBreed;
-        }
-    }
-
-    // Try item_info breed
-    const itemBreed = orderItem.item_info?.breed_id;
-    if (itemBreed) {
-        if (typeof itemBreed === 'object' && itemBreed.name) {
-            return itemBreed.name;
-        }
-        if (typeof itemBreed === 'string' && itemBreed.trim()) {
-            return itemBreed;
-        }
-    }
-
-    return ''; // Changed from 'Chưa rõ giống' to empty string
+    return (
+        getBreedNameFromSource(pet.breed_id) ||
+        getBreedNameFromSource(orderItem.variant_id?.pet_id?.breed_id) ||
+        getBreedNameFromSource(orderItem.item_info?.breed_id) ||
+        ''
+    );
 };
 
 const getVariantInfo = (orderItem: PurchasedPetOrderItem): string => {
@@ -195,7 +171,7 @@ const getVariantInfo = (orderItem: PurchasedPetOrderItem): string => {
     const parts = [];
     if (variant.color) parts.push(`Màu: ${variant.color}`);
     if (variant.weight) parts.push(`${variant.weight}kg`);
-    if (variant.gender) parts.push(variant.gender === 'Giới tính' ? 'Đực' : 'Cái');
+    if (variant.gender) parts.push(variant.gender === 'male' ? 'Đực' : 'Cái');
     if (variant.age) parts.push(`${variant.age} Tuổi`);
 
     return parts.join(' • ');
@@ -204,13 +180,11 @@ const getVariantInfo = (orderItem: PurchasedPetOrderItem): string => {
 const getPetImage = (pet: any, orderItem: PurchasedPetOrderItem): string => {
     const defaultImage = 'https://images.unsplash.com/photo-1552053831-71594a27632d?w=100&h=100&fit=crop&crop=face';
 
-    // Try orderItem images first
     if (orderItem.images?.length > 0) {
         const primaryImg = orderItem.images.find(img => img.is_primary) || orderItem.images[0];
         if (primaryImg?.url) return primaryImg.url;
     }
 
-    // Fallback to pet images
     if (pet.images?.length > 0) {
         return pet.images[0].url;
     }
@@ -223,7 +197,7 @@ const convertToPetFormat = (orderItem: PurchasedPetOrderItem): Pet | null => {
     if (!pet) return null;
 
     const petName = pet.name || 'Thú cưng';
-    const petType = pet.type || ''; // Changed from 'Chưa rõ loại' to empty string
+    const petType = pet.type || '';
     const petBreed = getBreedName(pet, orderItem);
     const variantInfo = getVariantInfo(orderItem);
     const petImage = getPetImage(pet, orderItem);
@@ -255,6 +229,67 @@ const getServiceIcon = (category: string): string => {
     return icons[category] || '🐕';
 };
 
+const createAppointmentData = (
+    selectedPet: Pet | null,
+    selectedService: Service | null,
+    selectedDate: string,
+    selectedTime: string,
+    customerInfo: CustomerInfo,
+    purchasedPets: PurchasedPetOrderItem[],
+    backendServices: any[],
+    paymentMethod: 'cod' | 'vnpay'
+): any | null => {
+    const selectedPetOrderItem = purchasedPets.find(item => item.pet_id?._id === selectedPet?.id);
+    const backendService = backendServices.find(s => s._id === selectedService?.id);
+
+    if (!selectedPetOrderItem?.pet_id || !backendService || !selectedPetOrderItem.order_id?._id) {
+        Alert.alert('Lỗi', 'Không tìm thấy thông tin thú cưng, dịch vụ hoặc đơn hàng');
+        return null;
+    }
+
+    const dateParts = selectedDate.split('/');
+    const apiDate = `${dateParts[2]}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}`;
+
+    return {
+        pet_id: selectedPetOrderItem.pet_id._id,
+        service_id: backendService._id,
+        appointment_date: apiDate,
+        appointment_time: selectedTime,
+        notes: customerInfo.notes.trim() || undefined,
+        order_id: selectedPetOrderItem.order_id._id,
+        total_amount: backendService.price,
+        item_type: selectedPetOrderItem.variant_id ? 'variant' : 'pet',
+        payment_method: paymentMethod,
+        ...(selectedPetOrderItem.variant_id?._id && { variant_id: selectedPetOrderItem.variant_id._id }),
+    };
+};
+
+const getPendingAppointmentData = async (pendingAppointment: any): Promise<any | null> => {
+    let appointmentData = pendingAppointment;
+    if (!appointmentData) {
+        try {
+            const storedData = await AsyncStorage.getItem(PENDING_APPOINTMENT_KEY);
+            if (storedData) {
+                appointmentData = JSON.parse(storedData);
+                console.log('✅ Sử dụng dữ liệu từ AsyncStorage:', appointmentData);
+            }
+        } catch (error) {
+            console.error('⚠️ Lỗi khi đọc từ AsyncStorage:', error);
+        }
+    }
+    return appointmentData;
+};
+
+const clearPendingData = async (dispatch: AppDispatch) => {
+    dispatch(clearPendingAppointment());
+    await AsyncStorage.removeItem(PENDING_APPOINTMENT_KEY);
+    console.log('🧹 Đã xóa dữ liệu tạm');
+};
+
+const showErrorAlert = (title: string, message: string, actions: any[] = [{ text: 'Đóng' }]) => {
+    Alert.alert(title, message, actions);
+};
+
 // ================================
 // MAIN COMPONENT
 // ================================
@@ -267,12 +302,14 @@ const PetCareBookingScreen: React.FC = () => {
     // Redux state
     const { services: backendServices, isLoading: servicesLoading } = useSelector((state: RootState) => state.careServices);
     const { availableSlots, isLoading: appointmentLoading } = useSelector((state: RootState) => state.appointments);
+    const noShowStatus = useSelector(selectNoShowStatus); // ✅ Thêm selector cho no-show status
 
     // Component state
     const [selectedPet, setSelectedPet] = useState<Pet | null>(null);
     const [selectedService, setSelectedService] = useState<Service | null>(null);
     const [selectedDate, setSelectedDate] = useState<string>('');
     const [selectedTime, setSelectedTime] = useState<string>('');
+    const [paymentMethod, setPaymentMethod] = useState<'cod' | 'vnpay'>('cod');
     const [customerInfo, setCustomerInfo] = useState<CustomerInfo>({
         name: user?.username || '',
         phone: user?.phone || '',
@@ -283,12 +320,45 @@ const PetCareBookingScreen: React.FC = () => {
     const [showCalendar, setShowCalendar] = useState(false);
     const [purchasedPets, setPurchasedPets] = useState<PurchasedPetOrderItem[]>([]);
     const [petsLoading, setPetsLoading] = useState(false);
+    const pendingAppointment = useSelector(selectPendingAppointment);
+
+    // VNPay related refs
+    const isHandled = useRef(false);
+    const appointmentDataRef = useRef<{
+        pet: Pet | null;
+        service: Service | null;
+        date: string;
+        time: string;
+        customerInfo: CustomerInfo;
+    }>({
+        pet: null,
+        service: null,
+        date: '',
+        time: '',
+        customerInfo: {
+            name: '',
+            phone: '',
+            email: '',
+            notes: ''
+        }
+    });
+    const SERVER_URLS = [API_BASE_URL.replace(/\/api$/, '')];
+
+    useEffect(() => {
+        appointmentDataRef.current = {
+            pet: selectedPet,
+            service: selectedService,
+            date: selectedDate,
+            time: selectedTime,
+            customerInfo
+        };
+    }, [selectedPet, selectedService, selectedDate, selectedTime, customerInfo]);
 
     // Computed values
     const pets: Pet[] = purchasedPets
         .map(convertToPetFormat)
         .filter((pet): pet is Pet => pet !== null);
-
+    // Lấy dịch vụ từ backend và map sang định dạng frontend
     const services: Service[] = backendServices.map(service => ({
         id: service._id,
         name: service.name,
@@ -297,7 +367,7 @@ const PetCareBookingScreen: React.FC = () => {
         description: service.description || '',
         icon: getServiceIcon(service.category)
     }));
-
+    // Định nghĩa khung giờ cố định
     const timeSlots: TimeSlot[] = [
         { time: '08:00', available: Array.isArray(availableSlots) ? availableSlots.includes('08:00') : true },
         { time: '09:00', available: Array.isArray(availableSlots) ? availableSlots.includes('09:00') : true },
@@ -322,7 +392,7 @@ const PetCareBookingScreen: React.FC = () => {
         }
         loadBackendData();
     }, [token]);
-
+    // Load dữ liệu backend (dịch vụ, thú cưng đã mua)
     useEffect(() => {
         if (selectedDate) {
             const dateParts = selectedDate.split('/');
@@ -334,20 +404,119 @@ const PetCareBookingScreen: React.FC = () => {
             }
         }
     }, [selectedDate]);
+    // Load available slots khi ngày thay đổi
+    useEffect(() => {
+        const handleDeepLink = async (event: { url: string }) => {
+            const url = event.url;
+            if (url.includes('payment-result') && !isHandled.current) {
+                isHandled.current = true;
+                await handleVNPayResponse(url);
+            }
+        };
 
-    // ================================
-    // FUNCTIONS
-    // ================================
+        const subscription = Linking.addEventListener('url', handleDeepLink);
 
+        Linking.getInitialURL().then(async (url) => {
+            if (url && url.includes('payment-result') && !isHandled.current) {
+                isHandled.current = true;
+                await handleVNPayResponse(url);
+            }
+        });
+
+        return () => {
+            subscription.remove();
+            // Reset isHandled after a timeout to allow retrying if needed
+            setTimeout(() => { isHandled.current = false; }, 60000);
+        };
+    }, [navigation]);
+
+    // ✅ Thêm effect: Fetch no-show status khi load backend data
+    useEffect(() => {
+        if (token) {
+            dispatch(getNoShowStatus());
+        }
+    }, [token, dispatch]);
+
+    // ✅ Thêm effect: Force VNPay nếu restricted
+    useEffect(() => {
+        if (noShowStatus.restricted) {
+            setPaymentMethod('vnpay');
+        }
+    }, [noShowStatus]);
+    // Lưu trạng thái lịch hẹn tạm thời vào Redux và AsyncStorage
+    useEffect(() => {
+        const saveAppointmentData = async () => {
+            if (
+                selectedPet &&
+                selectedService &&
+                selectedDate &&
+                selectedTime &&
+                customerInfo.name &&
+                customerInfo.phone
+            ) {
+                const appointmentData = createAppointmentData(
+                    selectedPet,
+                    selectedService,
+                    selectedDate,
+                    selectedTime,
+                    customerInfo,
+                    purchasedPets,
+                    backendServices,
+                    paymentMethod
+                );
+
+                if (appointmentData) {
+                    dispatch(savePendingAppointment(appointmentData));
+                    try {
+                        await AsyncStorage.setItem(PENDING_APPOINTMENT_KEY, JSON.stringify(appointmentData));
+                        console.log('🔄 Đã lưu pendingAppointment:', appointmentData);
+                    } catch (error) {
+                        console.error('⚠️ Lỗi lưu AsyncStorage:', error);
+                    }
+                }
+            }
+        };
+
+        saveAppointmentData();
+    }, [selectedPet, selectedService, selectedDate, selectedTime, customerInfo, paymentMethod, purchasedPets, backendServices]);
+    // Kiểm tra khung giờ có còn trống trước khi đặt lịch
+    const checkSlotAvailability = async (date: string, time: string): Promise<boolean> => {
+        try {
+            // Refresh available slots for the selected date
+            await dispatch(getAvailableSlots(date)).unwrap();
+
+            // Check if the selected time is still available
+            const isAvailable = Array.isArray(availableSlots) ? availableSlots.includes(time) : true;
+
+            if (!isAvailable) {
+                Alert.alert(
+                    'Khung giờ không khả dụng',
+                    'Khung giờ bạn chọn đã có người đặt. Vui lòng chọn thời gian khác.',
+                    [{ text: 'OK', onPress: () => setSelectedTime('') }]
+                );
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Lỗi kiểm tra slot availability:', error);
+            // Nếu không check được, vẫn cho phép tiếp tục (fail gracefully)
+            return true;
+        }
+    };
+
+
+    // Load dữ liệu backend (dịch vụ, thú cưng đã mua)
     const loadBackendData = async () => {
         try {
             await dispatch(getAllServices({ active: true }));
             await loadPurchasedPets();
         } catch (error) {
             console.error('Error loading backend data:', error);
+            Alert.alert('Lỗi', 'Không thể tải dữ liệu. Vui lòng thử lại.');
         }
     };
-
+    // Load thú cưng đã mua từ API
     const loadPurchasedPets = async () => {
         try {
             setPetsLoading(true);
@@ -362,7 +531,6 @@ const PetCareBookingScreen: React.FC = () => {
                     .map((item: ApiOrderItem) => extractPetFromOrderItem(item))
                     .filter((item): item is PurchasedPetOrderItem => item !== null);
 
-                // Remove duplicates based on pet ID
                 const uniquePets: PurchasedPetOrderItem[] = [];
                 const seenPetIds = new Set<string>();
 
@@ -394,57 +562,471 @@ const PetCareBookingScreen: React.FC = () => {
             setPetsLoading(false);
         }
     };
-
+    // Xử lý phản hồi từ VNPay
     const handleDateSelect = (day: { dateString: string }) => {
         const date = new Date(day.dateString);
         const formattedDate = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
         setSelectedDate(formattedDate);
         setShowCalendar(false);
     };
-
+    // Định dạng tiền tệ
     const formatPrice = (price: number) => {
         return new Intl.NumberFormat('vi-VN', {
             style: 'currency',
             currency: 'VND'
         }).format(price);
     };
-
-    const handleBooking = async () => {
+    // Xử lý thanh toán VNPay
+    const handleVNPayPayment = async () => {
         if (!selectedPet || !selectedService || !selectedDate || !selectedTime || !customerInfo.name || !customerInfo.phone) {
             Alert.alert('Thiếu thông tin', 'Vui lòng điền đầy đủ thông tin để đặt lịch');
             return;
         }
 
+        const appointmentData = createAppointmentData(
+            selectedPet,
+            selectedService,
+            selectedDate,
+            selectedTime,
+            customerInfo,
+            purchasedPets,
+            backendServices,
+            'vnpay'
+        );
+
+        if (!appointmentData) return;
+
         try {
-            const dateParts = selectedDate.split('/');
-            const apiDate = `${dateParts[2]}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}`;
+            // Xóa dữ liệu cũ trước khi lưu mới
+            dispatch(clearPendingAppointment());
+            await AsyncStorage.removeItem(PENDING_APPOINTMENT_KEY);
 
-            const selectedPetOrderItem = purchasedPets.find(item => item.pet_id?._id === selectedPet?.id);
-            const backendService = backendServices.find(s => s._id === selectedService.id);
+            // Lưu dữ liệu mới
+            dispatch(savePendingAppointment(appointmentData));
+            await AsyncStorage.setItem(PENDING_APPOINTMENT_KEY, JSON.stringify(appointmentData));
 
-            if (!selectedPetOrderItem?.pet_id || !backendService || !selectedPetOrderItem.order_id?._id) {
-                Alert.alert('Lỗi', 'Không tìm thấy thông tin cần thiết để đặt lịch');
+            // Tiếp tục với VNPay payment
+            let lastError = null;
+            for (const serverUrl of SERVER_URLS) {
+                try {
+                    console.log('🔗 Đang thử thanh toán VNPay với server:', serverUrl);
+
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+                    const response = await fetch(`${serverUrl}/create-vnpay-payment`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                            'Authorization': `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({
+                            amount: appointmentData.total_amount,
+                            user_id: user._id,
+                            pet_id: appointmentData.pet_id,
+                            service_id: appointmentData.service_id,
+                            appointment_date: appointmentData.appointment_date,
+                            appointment_time: appointmentData.appointment_time,
+                            notes: appointmentData.notes || '',
+                            order_id: appointmentData.order_id,
+                            orderInfo: `Thanh toan lich hen cho don hang ${appointmentData.order_id}`,
+                            orderType: 'appointment',
+                            ...(appointmentData.variant_id && { variant_id: appointmentData.variant_id }),
+                        }),
+                        signal: controller.signal,
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`Lỗi HTTP! Status: ${response.status}, Message: ${errorText}`);
+                    }
+
+                    const data = await response.json();
+                    console.log('📱 Phản hồi VNPay API:', data);
+
+                    if (!data.paymentUrl) {
+                        throw new Error('Thiếu paymentUrl từ server');
+                    }
+
+                    const supported = await Linking.canOpenURL(data.paymentUrl);
+                    if (supported) {
+                        await Linking.openURL(data.paymentUrl);
+                        return;
+                    } else {
+                        throw new Error('Không thể mở URL thanh toán VNPay');
+                    }
+                } catch (error) {
+                    lastError = error;
+                    console.log('❌ Kết nối VNPay thất bại tới', serverUrl, 'Lỗi:', error.message);
+                    continue;
+                }
+            }
+
+            console.error('🚫 Tất cả kết nối VNPay thất bại. Lỗi cuối:', lastError);
+            Alert.alert('Lỗi Thanh Toán VNPay', `Không thể kết nối đến máy chủ thanh toán VNPay: ${lastError?.message || 'Lỗi không xác định'}`);
+
+            // Xóa dữ liệu tạm nếu lỗi
+            await AsyncStorage.removeItem(PENDING_APPOINTMENT_KEY);
+
+        } catch (error) {
+            console.error('💥 Lỗi trong quá trình xử lý VNPay:', error);
+            Alert.alert('Lỗi', 'Có lỗi xảy ra khi xử lý thanh toán');
+            await AsyncStorage.removeItem(PENDING_APPOINTMENT_KEY);
+        }
+    };
+
+    // Xử lý phản hồi từ VNPay
+    const handleVNPayResponse = async (url: string) => {
+        try {
+            console.log('Xử lý URL phản hồi VNPay:', url);
+
+            const urlObj = new URL(url);
+            const urlParams = new URLSearchParams(urlObj.search);
+            const vnpayData: VNPayResponse = {
+                vnp_ResponseCode: urlParams.get('vnp_ResponseCode') || '',
+                vnp_TransactionStatus: urlParams.get('vnp_TransactionStatus') || '',
+                vnp_TxnRef: urlParams.get('vnp_TxnRef') || '',
+                vnp_PayDate: urlParams.get('vnp_PayDate') || '',
+                vnp_Amount: urlParams.get('vnp_Amount') || '',
+            };
+
+            console.log('Dữ liệu phản hồi VNPay:', vnpayData);
+
+            if (!vnpayData.vnp_TxnRef) {
+                throw new Error('Thiếu vnp_TxnRef trong phản hồi VNPay');
+            }
+
+            if (vnpayData.vnp_ResponseCode === '00' && vnpayData.vnp_TransactionStatus === '00') {
+                const currentPendingAppointment = await getPendingAppointmentData(pendingAppointment);
+                await createAppointmentWithVNPay(vnpayData, dispatch, currentPendingAppointment);
+                Alert.alert('Thành công', 'Thanh toán VNPay và đặt lịch thành công!');
+            } else {
+                // Xử lý lỗi thanh toán
+                const errorMessages = {
+                    '07': 'Giao dịch đang được kiểm tra',
+                    '09': 'Thẻ hoặc tài khoản không hợp lệ',
+                    '10': 'Người dùng hủy giao dịch',
+                    '24': 'Người dùng hủy giao dịch',
+                };
+                const errorMessage = errorMessages[vnpayData.vnp_ResponseCode] ||
+                    `Thanh toán VNPay thất bại: Mã lỗi ${vnpayData.vnp_ResponseCode}`;
+
+                Alert.alert('Lỗi Thanh Toán', errorMessage);
+                console.error('Thanh toán VNPay thất bại:', vnpayData);
+
+                // Xóa dữ liệu tạm
+                dispatch(clearPendingAppointment());
+                await AsyncStorage.removeItem(PENDING_APPOINTMENT_KEY);
+            }
+        } catch (error: any) {
+            console.error('Lỗi xử lý phản hồi VNPay:', error);
+            Alert.alert('Lỗi', `Có lỗi xảy ra khi xử lý kết quả thanh toán: ${error.message}`);
+
+            // Xóa dữ liệu tạm khi lỗi
+            dispatch(clearPendingAppointment());
+            await AsyncStorage.removeItem(PENDING_APPOINTMENT_KEY);
+        } finally {
+            isHandled.current = false;
+        }
+    };
+    // Cleanup khi component unmount
+    useEffect(() => {
+        return () => {
+            // Cleanup function khi component bị destroy
+            const cleanup = async () => {
+                try {
+                    // Chỉ xóa nếu không có giao dịch đang pending
+                    if (!isHandled.current) {
+                        await AsyncStorage.removeItem(PENDING_APPOINTMENT_KEY);
+                    }
+                } catch (error) {
+                    console.error('Lỗi cleanup:', error);
+                }
+            };
+            cleanup();
+        };
+    }, []);
+    // Tạo appointment sau khi thanh toán VNPay thành công
+    const createAppointmentWithVNPay = async (
+        vnpayData: VNPayResponse,
+        dispatch: AppDispatch,
+        pendingAppointment: any
+    ) => {
+        try {
+            let appointmentData = await getPendingAppointmentData(pendingAppointment);
+
+            if (!appointmentData) {
+                console.log('🔄 Tái tạo dữ liệu từ component state hiện tại...');
+
+                const currentData = appointmentDataRef.current;
+                if (currentData.pet && currentData.service && currentData.date && currentData.time) {
+                    const selectedPetOrderItem = purchasedPets.find(item => item.pet_id?._id === currentData.pet?.id);
+                    const backendService = backendServices.find(s => s._id === currentData.service?.id);
+
+                    if (selectedPetOrderItem && backendService) {
+                        const dateParts = currentData.date.split('/');
+                        const apiDate = `${dateParts[2]}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}`;
+
+                        appointmentData = {
+                            pet_id: selectedPetOrderItem.pet_id._id,
+                            service_id: backendService._id,
+                            appointment_date: apiDate,
+                            appointment_time: currentData.time,
+                            notes: currentData.customerInfo.notes.trim() || undefined,
+                            order_id: selectedPetOrderItem.order_id._id,
+                            total_amount: backendService.price,
+                            item_type: selectedPetOrderItem.variant_id ? 'variant' : 'pet',
+                            payment_method: 'vnpay',
+                            ...(selectedPetOrderItem.variant_id?._id && { variant_id: selectedPetOrderItem.variant_id._id }),
+                        };
+
+                        console.log('🔄 Đã tái tạo dữ liệu lịch hẹn từ state hiện tại');
+                    }
+                }
+            }
+
+            // Nếu vẫn không có dữ liệu
+            if (!appointmentData) {
+                console.error('❌ Không thể tìm thấy hoặc tái tạo dữ liệu lịch hẹn');
+                Alert.alert(
+                    'Lỗi Dữ Liệu',
+                    'Không tìm thấy thông tin đặt lịch. Giao dịch VNPay đã thành công nhưng không thể tạo lịch hẹn. Vui lòng liên hệ hỗ trợ.',
+                    [
+                        { text: 'Liên hệ hỗ trợ', onPress: () => {/* Navigate to support */ } },
+                        { text: 'Đóng' }
+                    ]
+                );
                 return;
             }
 
-            const appointmentData = {
-                pet_id: selectedPetOrderItem.pet_id._id,
-                service_id: backendService._id,
-                appointment_date: apiDate,
-                appointment_time: selectedTime,
-                notes: customerInfo.notes.trim() || undefined,
-                order_id: selectedPetOrderItem.order_id._id,
-                total_amount: backendService.price,
-                item_type: selectedPetOrderItem.variant_id ? 'variant' : 'pet',
-                ...(selectedPetOrderItem.variant_id?._id && { variant_id: selectedPetOrderItem.variant_id._id })
+            // Thêm transaction ID từ VNPay
+            const finalAppointmentData = {
+                ...appointmentData,
+                vnpay_transaction_id: vnpayData.vnp_TxnRef,
             };
 
-            await dispatch(createAppointment(appointmentData)).unwrap();
+            console.log('🎯 Tạo lịch hẹn với dữ liệu cuối cùng:', finalAppointmentData);
+
+            const result = await dispatch(createAppointment(finalAppointmentData)).unwrap();
+            console.log('✅ Lịch hẹn được tạo thành công:', result);
+
+            // Xóa dữ liệu tạm sau khi thành công
+            await clearPendingData(dispatch);
+
+            setShowConfirmation(true);
+
+        } catch (error: any) {
+            console.error('💥 Lỗi tạo lịch hẹn VNPay:', error);
+
+            // Xóa dữ liệu tạm khi lỗi
+            await clearPendingData(dispatch);
+
+            let errorMessage = error.message || 'Không thể tạo lịch hẹn. Vui lòng thử lại.';
+            let alertActions = [{ text: 'Đóng' }];
+
+            // Xử lý lỗi cụ thể
+            if (error.message?.includes('Khung giờ này đã được đặt')) {
+                errorMessage = 'Khung giờ này đã có người đặt. Vui lòng chọn thời gian khác.';
+                alertActions = [
+                    {
+                        text: 'Chọn lại thời gian',
+                        onPress: () => {
+                            // Reset time selection để user chọn lại
+                            setSelectedTime('');
+                            // Reload available slots
+                            if (selectedDate) {
+                                const dateParts = selectedDate.split('/');
+                                const apiDate = `${dateParts[2]}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}`;
+                                dispatch(getAvailableSlots(apiDate));
+                            }
+                        }
+                    },
+                    { text: 'Đóng' }
+                ];
+            }
+
+            Alert.alert('Lỗi Đặt Lịch', errorMessage, alertActions);
+        }
+    };
+
+    // ✅ Thêm hàm khôi phục pendingAppointment từ AsyncStorage khi component mount
+    const restorePendingAppointment = async () => {
+        try {
+            const storedData = await AsyncStorage.getItem(PENDING_APPOINTMENT_KEY);
+            if (storedData) {
+                const appointmentData = JSON.parse(storedData);
+                dispatch(savePendingAppointment(appointmentData));
+                console.log('Đã khôi phục pendingAppointment từ AsyncStorage');
+            }
+        } catch (error) {
+            console.error('Lỗi khôi phục pendingAppointment:', error);
+        }
+    };
+
+    // Thêm useEffect để khôi phục dữ liệu khi component mount
+    useEffect(() => {
+        restorePendingAppointment();
+    }, []);
+
+    const validateAppointmentDateTime = (dateString: string, timeString: string): { isValid: boolean; message?: string } => {
+        try {
+            // Parse date từ format DD/MM/YYYY
+            const dateParts = dateString.split('/');
+            if (dateParts.length !== 3) {
+                return { isValid: false, message: 'Định dạng ngày không hợp lệ' };
+            }
+
+            const day = parseInt(dateParts[0]);
+            const month = parseInt(dateParts[1]) - 1; // Month is 0-indexed in JS Date
+            const year = parseInt(dateParts[2]);
+
+            // Parse time từ format HH:MM
+            const timeParts = timeString.split(':');
+            if (timeParts.length !== 2) {
+                return { isValid: false, message: 'Định dạng thời gian không hợp lệ' };
+            }
+
+            const hour = parseInt(timeParts[0]);
+            const minute = parseInt(timeParts[1]);
+
+            // Tạo Date object cho appointment
+            const appointmentDateTime = new Date(year, month, day, hour, minute);
+            const now = new Date();
+
+            console.log('🕐 Validating appointment time:', {
+                appointmentDateTime: appointmentDateTime.toISOString(),
+                now: now.toISOString(),
+                isPast: appointmentDateTime <= now
+            });
+
+            // Kiểm tra thời gian đặt lịch phải trong tương lai
+            if (appointmentDateTime <= now) {
+                return {
+                    isValid: false,
+                    message: 'Thời gian đặt lịch phải trong tương lai'
+                };
+            }
+
+            // Thêm validation: không được đặt lịch quá xa (ví dụ: không quá 3 tháng)
+            const threeMonthsFromNow = new Date();
+            threeMonthsFromNow.setMonth(threeMonthsFromNow.getMonth() + 3);
+
+            if (appointmentDateTime > threeMonthsFromNow) {
+                return {
+                    isValid: false,
+                    message: 'Không thể đặt lịch quá 3 tháng trong tương lai'
+                };
+            }
+
+            // Thêm validation: không được đặt lịch vào chủ nhật
+            const dayOfWeek = appointmentDateTime.getDay();
+            if (dayOfWeek === 0) { // Sunday = 0
+                return {
+                    isValid: false,
+                    message: 'Không thể đặt lịch vào Chủ nhật. Vui lòng chọn ngày khác.'
+                };
+            }
+
+            return { isValid: true };
+        } catch (error) {
+            console.error('Error validating appointment time:', error);
+            return {
+                isValid: false,
+                message: 'Lỗi khi kiểm tra thời gian đặt lịch'
+            };
+        }
+    };
+
+    // Xử lý đặt lịch
+    const handleBooking = async () => {
+
+        if (!selectedPet || !selectedService || !selectedDate || !selectedTime || !customerInfo.name || !customerInfo.phone) {
+            Alert.alert('Thiếu thông tin', 'Vui lòng điền đầy đủ thông tin để đặt lịch');
+            return;
+        }
+        const timeValidation = validateAppointmentDateTime(selectedDate, selectedTime);
+        if (!timeValidation.isValid) {
+            Alert.alert('Lỗi thời gian', timeValidation.message || 'Thời gian đặt lịch không hợp lệ');
+            return;
+        }
+        // Check restricted status
+        if (!noShowStatus) {
+            Alert.alert('Đang tải', 'Vui lòng chờ kiểm tra trạng thái no-show trước khi đặt lịch.');
+            return;
+        }
+        if (noShowStatus.restricted && paymentMethod === 'cod') {
+            Alert.alert(
+                'Cảnh báo',
+                `Bạn đã không đến lịch hẹn ${noShowStatus.noShowCount} lần trong 3 tháng qua. Vui lòng sử dụng thanh toán VNPay để đặt lịch.`
+            );
+            setPaymentMethod('vnpay');
+            return;
+        }
+
+        // 🔥 THÊM: Kiểm tra slot availability trước khi proceed
+        const dateParts = selectedDate.split('/');
+        const apiDate = `${dateParts[2]}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}`;
+
+        const isSlotAvailable = await checkSlotAvailability(apiDate, selectedTime);
+        if (!isSlotAvailable) {
+            return; // Stop if slot is not available
+        }
+
+        if (paymentMethod === 'vnpay') {
+            await handleVNPayPayment();
+            return;
+        }
+
+        // COD flow remains the same...
+        const appointmentData = createAppointmentData(
+            selectedPet,
+            selectedService,
+            selectedDate,
+            selectedTime,
+            customerInfo,
+            purchasedPets,
+            backendServices,
+            'cod'
+        );
+
+        if (!appointmentData) return;
+
+        try {
+            console.log('💰 Tạo lịch hẹn COD:', appointmentData);
+
+            const result = await dispatch(createAppointment(appointmentData)).unwrap();
+            console.log('✅ Lịch hẹn COD được tạo thành công:', result);
+
             setShowConfirmation(true);
         } catch (error: any) {
-            console.error('❌ Appointment creation error:', error);
+            Alert.alert(
+                'Cảnh báo',
+                'Bạn đã không đến lịch hẹn 3 lần trong 3 tháng qua. Vui lòng sử dụng thanh toán VNPay để đặt lịch.',
+                [
+                    {
+                        text: 'Chọn VNPay',
+                        onPress: () => setPaymentMethod('vnpay'),
+                    },
+                    { text: 'Đóng' },
+                ]
+            );
             Alert.alert('Lỗi', error.message || 'Không thể đặt lịch hẹn. Vui lòng thử lại.');
         }
+    };
+
+    // ✅ Cập nhật hàm setPaymentMethod để check restricted
+    const handleSetPaymentMethod = (method: 'cod' | 'vnpay') => {
+        if (noShowStatus.restricted && method === 'cod') {
+            Alert.alert(
+                'Cảnh báo',
+                `Bạn đã không đến lịch hẹn ${noShowStatus.noShowCount} lần trong 3 tháng qua. Vui lòng sử dụng thanh toán VNPay.`
+            );
+            return;
+        }
+        setPaymentMethod(method);
     };
 
     const resetForm = () => {
@@ -452,6 +1034,7 @@ const PetCareBookingScreen: React.FC = () => {
         setSelectedService(null);
         setSelectedDate('');
         setSelectedTime('');
+        setPaymentMethod('cod');
         setCustomerInfo({
             name: user?.username || '',
             phone: user?.phone || '',
@@ -461,10 +1044,7 @@ const PetCareBookingScreen: React.FC = () => {
         setShowConfirmation(false);
     };
 
-    // ================================
-    // RENDER FUNCTIONS
-    // ================================
-
+    // Render pet item
     const renderPetItem = ({ item }: { item: Pet }) => (
         <TouchableOpacity
             style={[styles.petItem, selectedPet?.id === item.id && styles.selectedItem]}
@@ -481,7 +1061,7 @@ const PetCareBookingScreen: React.FC = () => {
             )}
         </TouchableOpacity>
     );
-
+    // Render service item
     const renderServiceItem = ({ item }: { item: Service }) => (
         <TouchableOpacity
             style={[styles.serviceItem, selectedService?.id === item.id && styles.selectedItem]}
@@ -503,7 +1083,7 @@ const PetCareBookingScreen: React.FC = () => {
             <Text style={styles.servicePrice}>{formatPrice(item.price)}</Text>
         </TouchableOpacity>
     );
-
+    // Render time slot item
     const renderTimeSlot = ({ item }: { item: TimeSlot }) => (
         <TouchableOpacity
             style={[
@@ -527,7 +1107,7 @@ const PetCareBookingScreen: React.FC = () => {
     // ================================
     // CONFIRMATION SCREEN
     // ================================
-
+    // Hiển thị
     if (showConfirmation) {
         return (
             <SafeAreaView style={styles.container}>
@@ -538,7 +1118,10 @@ const PetCareBookingScreen: React.FC = () => {
                         </View>
                         <Text style={styles.confirmationTitle}>Đặt lịch thành công!</Text>
                         <Text style={styles.confirmationMessage}>
-                            Chúng tôi đã nhận được yêu cầu đặt lịch của bạn. Nhân viên sẽ liên hệ xác nhận trong vòng 30 phút.
+                            {paymentMethod === 'vnpay' ?
+                                'Thanh toán VNPay đã hoàn tất và lịch hẹn được đặt thành công. Nhân viên sẽ liên hệ xác nhận trong vòng 30 phút.' :
+                                'Chúng tôi đã nhận được yêu cầu đặt lịch của bạn. Nhân viên sẽ liên hệ xác nhận trong vòng 30 phút.'
+                            }
                         </Text>
                         <View style={styles.bookingInfo}>
                             <Text style={styles.bookingInfoTitle}>Thông tin đặt lịch:</Text>
@@ -546,13 +1129,23 @@ const PetCareBookingScreen: React.FC = () => {
                             <Text style={styles.bookingInfoItem}>• Dịch vụ: {selectedService?.name}</Text>
                             <Text style={styles.bookingInfoItem}>• Ngày: {selectedDate}</Text>
                             <Text style={styles.bookingInfoItem}>• Giờ: {selectedTime}</Text>
+                            <Text style={styles.bookingInfoItem}>• Thanh toán: {paymentMethod === 'vnpay' ? 'VNPay (Đã thanh toán)' : 'COD'}</Text>
+                            <Text style={styles.bookingInfoItem}>• Tổng tiền: {formatPrice(selectedService?.price || 0)}</Text>
                         </View>
-                        <TouchableOpacity
-                            style={styles.newBookingButton}
-                            onPress={() => navigation.navigate('AppointmentHistory')}
-                        >
-                            <Text style={styles.newBookingButtonText}>Đặt lịch mới</Text>
-                        </TouchableOpacity>
+                        <View style={styles.confirmationButtons}>
+                            <TouchableOpacity
+                                style={styles.historyButton}
+                                onPress={() => navigation.navigate('AppointmentHistory')}
+                            >
+                                <Text style={styles.historyButtonText}>Xem lịch hẹn</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.newBookingButton}
+                                onPress={resetForm}
+                            >
+                                <Text style={styles.newBookingButtonText}>Đặt lịch mới</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
             </SafeAreaView>
@@ -577,7 +1170,6 @@ const PetCareBookingScreen: React.FC = () => {
 
             <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
                 <View style={styles.content}>
-                    {/* Progress Steps */}
                     <View style={styles.progressContainer}>
                         <View style={styles.progressStep}>
                             <View style={[styles.progressCircle, styles.activeProgress]}>
@@ -597,11 +1189,10 @@ const PetCareBookingScreen: React.FC = () => {
                             <View style={[styles.progressCircle, selectedService && styles.activeProgress]}>
                                 <Text style={styles.progressText}>3</Text>
                             </View>
-                            <Text style={styles.progressLabel}>Chọn thời gian</Text>
+                            <Text style={styles.progressLabel}>Thời gian & thanh toán</Text>
                         </View>
                     </View>
 
-                    {/* Pet Selection */}
                     <View style={styles.section}>
                         <View style={styles.sectionHeader}>
                             <Ionicons name="heart" size={24} color="#EC4899" />
@@ -636,7 +1227,6 @@ const PetCareBookingScreen: React.FC = () => {
                         )}
                     </View>
 
-                    {/* Service Selection */}
                     {selectedPet && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
@@ -658,7 +1248,6 @@ const PetCareBookingScreen: React.FC = () => {
                         </View>
                     )}
 
-                    {/* Date & Time Selection */}
                     {selectedService && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
@@ -693,7 +1282,52 @@ const PetCareBookingScreen: React.FC = () => {
                         </View>
                     )}
 
-                    {/* Customer Info */}
+                    {selectedTime && (
+                        <View style={styles.section}>
+                            <View style={styles.sectionHeader}>
+                                <Ionicons name="card" size={24} color="#F59E0B" />
+                                <Text style={styles.sectionTitle}>Phương thức thanh toán</Text>
+                            </View>
+                            {/* ✅ Thêm thông báo nếu restricted */}
+                            {noShowStatus.restricted && (
+                                <Text style={styles.restrictedNote}>
+                                    Bạn đã không đến {noShowStatus.noShowCount} lần trong 3 tháng. Chỉ có thể thanh toán qua VNPay.
+                                </Text>
+                            )}
+                            <TouchableOpacity
+                                style={[
+                                    styles.paymentOption,
+                                    paymentMethod === 'cod' && styles.paymentSelected,
+                                    noShowStatus.restricted && styles.disabledPayment // ✅ Disable style nếu restricted
+                                ]}
+                                onPress={() => handleSetPaymentMethod('cod')} // ✅ Sử dụng hàm mới
+                                disabled={noShowStatus.restricted} // ✅ Disable nếu restricted
+                            >
+                                <FontAwesome5 name="money-check" size={20} color="#10B981" style={styles.paymentIcon} />
+                                <View style={styles.paymentInfo}>
+                                    <Text style={styles.paymentText}>Thanh toán khi nhận dịch vụ</Text>
+                                    <Text style={styles.paymentDescription}>Thanh toán tiền mặt tại cửa hàng</Text>
+                                </View>
+                                <View style={styles.radioCircle}>
+                                    {paymentMethod === 'cod' && <View style={styles.selectedDot} />}
+                                </View>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.paymentOption, paymentMethod === 'vnpay' && styles.paymentSelected]}
+                                onPress={() => handleSetPaymentMethod('vnpay')} // ✅ Sử dụng hàm mới
+                            >
+                                <FontAwesome5 name="credit-card" size={20} color="#1976D2" style={styles.paymentIcon} />
+                                <View style={styles.paymentInfo}>
+                                    <Text style={styles.paymentText}>Thanh toán qua VNPay</Text>
+                                    <Text style={styles.paymentDescription}>An toàn, tiện lợi, hỗ trợ nhiều ngân hàng</Text>
+                                </View>
+                                <View style={styles.radioCircle}>
+                                    {paymentMethod === 'vnpay' && <View style={styles.selectedDot} />}
+                                </View>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+
                     {selectedTime && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
@@ -747,7 +1381,6 @@ const PetCareBookingScreen: React.FC = () => {
                         </View>
                     )}
 
-                    {/* Booking Summary */}
                     {selectedTime && customerInfo.name && customerInfo.phone && (
                         <View style={styles.summarySection}>
                             <Text style={styles.summaryTitle}>Tóm tắt đặt lịch</Text>
@@ -767,6 +1400,12 @@ const PetCareBookingScreen: React.FC = () => {
                                 <Text style={styles.summaryLabel}>Thời gian:</Text>
                                 <Text style={styles.summaryValue}>{selectedService?.duration}</Text>
                             </View>
+                            <View style={styles.summaryItem}>
+                                <Text style={styles.summaryLabel}>Thanh toán:</Text>
+                                <Text style={styles.summaryValue}>
+                                    {paymentMethod === 'vnpay' ? 'VNPay (Trực tuyến)' : 'COD'}
+                                </Text>
+                            </View>
                             <View style={styles.summaryDivider} />
                             <View style={styles.summaryItem}>
                                 <Text style={styles.summaryTotalLabel}>Tổng tiền:</Text>
@@ -785,15 +1424,21 @@ const PetCareBookingScreen: React.FC = () => {
                                 {appointmentLoading ? (
                                     <ActivityIndicator size="small" color="#FFFFFF" />
                                 ) : (
-                                    <Text style={styles.bookingButtonText}>Xác nhận đặt lịch</Text>
+                                    <Text style={styles.bookingButtonText}>
+                                        {paymentMethod === 'vnpay' ? 'Thanh toán VNPay' : 'Xác nhận đặt lịch'}
+                                    </Text>
                                 )}
                             </TouchableOpacity>
+                            {paymentMethod === 'vnpay' && (
+                                <Text style={styles.paymentNote}>
+                                    Bạn sẽ được chuyển đến trang thanh toán VNPay để hoàn tất giao dịch
+                                </Text>
+                            )}
                         </View>
                     )}
                 </View>
             </ScrollView>
 
-            {/* Calendar Modal */}
             <Modal
                 visible={showCalendar}
                 animationType="slide"
@@ -851,6 +1496,7 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: '#374151',
     },
+
     scrollContainer: {
         flex: 1,
     },
@@ -1027,6 +1673,67 @@ const styles = StyleSheet.create({
         color: '#3B82F6',
     },
 
+    // Payment Options
+    paymentOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        borderRadius: 8,
+        borderWidth: 2,
+        borderColor: '#E5E7EB',
+        marginBottom: 12,
+        backgroundColor: '#FFFFFF',
+    },
+    paymentSelected: {
+        borderColor: '#3B82F6',
+        backgroundColor: '#EFF6FF',
+    },
+    paymentIcon: {
+        width: 30,
+        textAlign: 'center',
+        marginRight: 12,
+    },
+    paymentInfo: {
+        flex: 1,
+    },
+    paymentText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#374151',
+        marginBottom: 2,
+    },
+    paymentDescription: {
+        fontSize: 12,
+        color: '#6B7280',
+    },
+    radioCircle: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        borderWidth: 2,
+        borderColor: '#3B82F6',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    selectedDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#3B82F6',
+    },
+
+    // ✅ Thêm style cho disable payment và note restricted
+    disabledPayment: {
+        opacity: 0.5,
+        backgroundColor: '#F3F4F6',
+    },
+    restrictedNote: {
+        fontSize: 14,
+        color: '#EF4444',
+        marginBottom: 12,
+        textAlign: 'center',
+    },
+
     // Form Inputs
     inputLabel: {
         fontSize: 14,
@@ -1140,6 +1847,13 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: '#3B82F6',
     },
+    paymentNote: {
+        fontSize: 12,
+        color: '#6B7280',
+        textAlign: 'center',
+        marginTop: 8,
+        fontStyle: 'italic',
+    },
 
     // Buttons
     bookingButton: {
@@ -1217,19 +1931,6 @@ const styles = StyleSheet.create({
         color: '#6B7280',
         marginBottom: 4,
     },
-    newBookingButton: {
-        backgroundColor: '#3B82F6',
-        padding: 16,
-        borderRadius: 12,
-        alignItems: 'center',
-        width: '100%',
-    },
-    newBookingButtonText: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: '#FFFFFF',
-    },
-
     // Modal
     modalContainer: {
         flex: 1,
@@ -1252,6 +1953,41 @@ const styles = StyleSheet.create({
         marginTop: 16,
     },
     closeButtonText: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#FFFFFF',
+    },
+
+
+    confirmationButtons: {
+        width: '100%',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: 12, // Add spacing between buttons
+        marginTop: 8,
+    },
+    historyButton: {
+        flex: 1, // Make buttons equal width
+        backgroundColor: '#F3F4F6',
+        borderRadius: 12,
+        padding: 12,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#D1D5DB',
+    },
+    historyButtonText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#374151',
+    },
+    newBookingButton: {
+        flex: 1, // Make buttons equal width
+        backgroundColor: '#3B82F6',
+        padding: 12,
+        borderRadius: 12,
+        alignItems: 'center',
+    },
+    newBookingButtonText: {
         fontSize: 16,
         fontWeight: 'bold',
         color: '#FFFFFF',
