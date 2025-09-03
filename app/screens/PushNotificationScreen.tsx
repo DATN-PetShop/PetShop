@@ -56,11 +56,11 @@ export default function PushNotificationScreen() {
       switch (notification.type) {
         case 'order':
           // Kiểm tra xem route có tồn tại không
-          if (navigation.getState().routeNames.includes('OrderDetailScreen')) {
-            navigation.navigate('OrderDetailScreen', { orderId: notification.relatedEntityId });
+          if (navigation.getState().routeNames.includes('OrderDetail')) {
+            navigation.navigate('OrderDetail', { orderId: notification.relatedEntityId });
           } else {
-            console.log('OrderDetailScreen not found, navigating to HistoryScreen');
-            navigation.navigate('HistoryScreen');
+            console.log('OrderDetail not found, navigating to History');
+            navigation.navigate('History');
           }
           break;
         case 'chat':
@@ -71,37 +71,35 @@ export default function PushNotificationScreen() {
           }
           break;
         case 'appointment':
-          if (navigation.getState().routeNames.includes('AppointmentListScreen')) {
-            navigation.navigate('AppointmentListScreen', { appointmentId: notification.relatedEntityId });
+          if (navigation.getState().routeNames.includes('AppointmentHistory')) {
+            navigation.navigate('AppointmentHistory', { appointmentId: notification.relatedEntityId });
           } else {
-            console.log('AppointmentListScreen not found');
+            console.log('AppointmentHistory not found');
           }
           break;
         case 'promotion':
           // Thử navigate đến màn hình voucher hoặc home
-          if (navigation.getState().routeNames.includes('VoucherScreen')) {
-            navigation.navigate('VoucherScreen');
-          } else if (navigation.getState().routeNames.includes('HomeScreen')) {
-            navigation.navigate('HomeScreen');
+          if (navigation.getState().routeNames.includes('Voucher')) {
+            navigation.navigate('Voucher');
           } else {
-            console.log('VoucherScreen not found, navigating to home');
-            navigation.navigate('Home');
+            console.log('Voucher not found, navigating to app (main screen)');
+            navigation.navigate('app');
           }
           break;
         case 'review':
-          if (navigation.getState().routeNames.includes('ReviewsScreen')) {
-            navigation.navigate('ReviewsScreen', { productId: notification.relatedEntityId });
-          } else if (navigation.getState().routeNames.includes('ProductDetailScreen')) {
-            navigation.navigate('ProductDetailScreen', { productId: notification.relatedEntityId });
+          if (navigation.getState().routeNames.includes('Reviews')) {
+            navigation.navigate('Reviews', { productId: notification.relatedEntityId });
+          } else if (navigation.getState().routeNames.includes('ProductDetail')) {
+            navigation.navigate('ProductDetail', { productId: notification.relatedEntityId });
           } else {
-            console.log('ReviewsScreen not found');
+            console.log('Reviews not found');
           }
           break;
         case 'sale':
-          if (navigation.getState().routeNames.includes('ProductDetailScreen')) {
-            navigation.navigate('ProductDetailScreen', { productId: notification.relatedEntityId });
+          if (navigation.getState().routeNames.includes('ProductDetail')) {
+            navigation.navigate('ProductDetail', { productId: notification.relatedEntityId });
           } else {
-            console.log('ProductDetailScreen not found');
+            console.log('ProductDetail not found');
           }
           break;
         default:
