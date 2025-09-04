@@ -39,7 +39,6 @@ export const appointmentService = {
             console.log('✅ Appointment created:', response.data);
             return response.data;
         } catch (error: any) {
-            console.error('❌ Create appointment error:', error.response?.data || error.message);
             throw error;
         }
     },
