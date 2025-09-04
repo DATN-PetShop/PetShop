@@ -1013,7 +1013,6 @@ const PetCareBookingScreen: React.FC = () => {
                     { text: 'Đóng' },
                 ]
             );
-            Alert.alert('Lỗi', error.message || 'Không thể đặt lịch hẹn. Vui lòng thử lại.');
         }
     };
 
