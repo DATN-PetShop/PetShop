@@ -53,30 +53,18 @@ const HomeScreen = () => {
     {
       id: '1',
       image: 'https://lh3.googleusercontent.com/proxy/YGBdiGmx0h-riNmW-TPMA_o5BY-9hLAuEmu3CwdtbG7BN8yo2AevyQgu5TM49Bwuo0GM1eNd1XNVOqoIvF1IVHhFHTDzuy-xPBdGZXfQlK2AY2Xrspkrlz0-8nvwkMagvkGE0JFNUx0gK9O0',
-      // title: 'Chào mừng đến Pet Shop',
-      // subtitle: 'Tìm thú cưng yêu thích của bạn',
-      onPress: () => safeNavigate(navigation, 'PetAll'),
     },
     {
       id: '2',
       image: 'https://vetad.net/wp-content/uploads/2018/10/Banner3-1.jpg',
-      // title: 'Khuyến mãi đặc biệt',
-      // subtitle: 'Giảm giá 20% cho tất cả thú cưng',
-      onPress: () => safeNavigate(navigation, 'Promotions'),
     },
     {
       id: '3',
-      image: 'https://cdn.shopify.com/s/files/1/0268/6861/files/cat-supplies-checklist_600x600.jpg?v=1571152745',
-      // title: 'Phụ kiện thú cưng',
-      // subtitle: 'Đầy đủ phụ kiện chăm sóc',
-      onPress: () => safeNavigate(navigation, 'ProductAll'),
+      image: 'https://img.freepik.com/vector-cao-cap/mau-banner-cua-hang-thu-cung_578602-565.jpg',
     },
     {
       id: '4',
-      image: 'https://www.petlandcanada.com/assets/images/blog/caring-for-a-puppy.jpg',
-      // title: 'Dịch vụ chăm sóc',
-      // subtitle: 'Spa, tắm rửa, cắt tỉa lông',
-      onPress: () => safeNavigate(navigation, 'Services'),
+      image: 'https://sieupet.com/sites/default/files/daidien4.jpg',
     },
   ]);
 
